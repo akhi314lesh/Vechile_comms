@@ -2028,70 +2028,93 @@ function collectRayTargets() {
 let sensorVis = null;
 function makeSensorVisualizer() {
   const group = new THREE.Group();
-  const N_RAYS = 15;
+  const N_RAYS = 36; // 360° full surround array every 10°
   const rayAngles = [];
   for (let i = 0; i < N_RAYS; i++) {
-    rayAngles.push((-24 + (48 / (N_RAYS - 1)) * i) * Math.PI / 180);
+    rayAngles.push((i * (360 / N_RAYS)) * Math.PI / 180);
   }
   
-  // Dynamic Ray Lines
+  // Dynamic 360° Ray Lines with Vertex Colors
   const rayPositions = new Float32Array(N_RAYS * 2 * 3);
+  const rayColors = new Float32Array(N_RAYS * 2 * 3);
   const rayGeo = new THREE.BufferGeometry();
   rayGeo.setAttribute('position', new THREE.BufferAttribute(rayPositions, 3));
+  rayGeo.setAttribute('color', new THREE.BufferAttribute(rayColors, 3));
+  
   const rayMat = new THREE.LineBasicMaterial({
-    color: 0x45e6ff,
+    vertexColors: true,
     transparent: true,
-    opacity: 0.65,
+    opacity: 0.75,
     blending: THREE.AdditiveBlending,
     depthWrite: false
   });
   const rayLines = new THREE.LineSegments(rayGeo, rayMat);
   group.add(rayLines);
 
-  // Range Arcs at 15m, 35m, 60m
-  const arcDistances = [15, 35, 60];
-  const arcPositions = [];
-  const minA = -24 * Math.PI / 180, maxA = 24 * Math.PI / 180;
-  const arcSteps = 32;
-  for (const dist of arcDistances) {
-    for (let s = 0; s < arcSteps; s++) {
-      const a1 = minA + (maxA - minA) * (s / arcSteps);
-      const a2 = minA + (maxA - minA) * ((s + 1) / arcSteps);
-      arcPositions.push(Math.sin(a1) * dist, 0.45, -Math.cos(a1) * dist - 2.3);
-      arcPositions.push(Math.sin(a2) * dist, 0.45, -Math.cos(a2) * dist - 2.3);
+  // Full 360° Concentric Range Rings (8m, 20m, 45m)
+  const ringDistances = [8, 20, 45];
+  const ringPositions = [];
+  const ringColors = [];
+  const ringSteps = 64;
+  for (const dist of ringDistances) {
+    for (let s = 0; s < ringSteps; s++) {
+      const a1 = (s / ringSteps) * Math.PI * 2;
+      const a2 = ((s + 1) / ringSteps) * Math.PI * 2;
+      ringPositions.push(Math.sin(a1) * dist, 0.42, -Math.cos(a1) * dist);
+      ringPositions.push(Math.sin(a2) * dist, 0.42, -Math.cos(a2) * dist);
+      const col = dist <= 8 ? [1.0, 0.35, 0.3] : dist <= 20 ? [1.0, 0.7, 0.2] : [0.27, 0.9, 1.0];
+      ringColors.push(...col, ...col);
     }
   }
-  const arcGeo = new THREE.BufferGeometry();
-  arcGeo.setAttribute('position', new THREE.Float32BufferAttribute(arcPositions, 3));
-  const arcMat = new THREE.LineBasicMaterial({
-    color: 0x45e6ff,
+  const ringGeo = new THREE.BufferGeometry();
+  ringGeo.setAttribute('position', new THREE.Float32BufferAttribute(ringPositions, 3));
+  ringGeo.setAttribute('color', new THREE.Float32BufferAttribute(ringColors, 3));
+  const ringMat = new THREE.LineBasicMaterial({
+    vertexColors: true,
     transparent: true,
-    opacity: 0.30,
+    opacity: 0.32,
     blending: THREE.AdditiveBlending,
     depthWrite: false
   });
-  const arcLines = new THREE.LineSegments(arcGeo, arcMat);
-  group.add(arcLines);
+  const ringLines = new THREE.LineSegments(ringGeo, ringMat);
+  group.add(ringLines);
 
   function update(hits) {
     const pos = rayGeo.attributes.position.array;
+    const col = rayGeo.attributes.color.array;
     for (let i = 0; i < N_RAYS; i++) {
       const a = rayAngles[i];
-      const maxFar = 65;
+      // Range profile: Forward reaches 70m, Sides reach 25m, Rear reaches 40m
+      const isFwd = Math.cos(a) > 0.65;
+      const isRear = Math.cos(a) < -0.65;
+      const maxFar = isFwd ? 70 : isRear ? 40 : 25;
       let d = maxFar;
       if (hits && hits[i] !== undefined) d = Math.min(hits[i], maxFar);
+      
       const idx = i * 6;
-      pos[idx] = 0;
-      pos[idx + 1] = 0.55;
-      pos[idx + 2] = -2.3;
+      // Start at vehicle perimeter
+      const startX = Math.sin(a) * 1.0;
+      const startZ = -Math.cos(a) * 1.8;
+      pos[idx] = startX;
+      pos[idx + 1] = 0.52;
+      pos[idx + 2] = startZ;
       pos[idx + 3] = Math.sin(a) * d;
-      pos[idx + 4] = 0.45;
-      pos[idx + 5] = -2.3 - Math.cos(a) * d;
+      pos[idx + 4] = 0.42;
+      pos[idx + 5] = -Math.cos(a) * d;
+
+      // Dynamic color thresholding: Red (<7m) -> Amber (<15m) -> Cyan (Safe)
+      let r = 0.27, g = 0.90, b = 1.0;
+      if (d < 6.5) { r = 1.0; g = 0.20; b = 0.20; }
+      else if (d < 15.0) { r = 1.0; g = 0.72; b = 0.22; }
+
+      col[idx] = r; col[idx + 1] = g; col[idx + 2] = b;
+      col[idx + 3] = r; col[idx + 4] = g; col[idx + 5] = b;
     }
     rayGeo.attributes.position.needsUpdate = true;
+    rayGeo.attributes.color.needsUpdate = true;
   }
 
-  update(new Array(N_RAYS).fill(65));
+  update(new Array(N_RAYS).fill(50));
   return { group, update, rayAngles };
 }
 
@@ -2119,29 +2142,57 @@ function updateSensors(et) {
   collectRayTargets();
   const f = dyn.forward();
   const hits = [];
-  /* forward radar fan */
-  let nearest = null;
-  const fanOx = dyn.x + f.x * 1.9, fanOz = dyn.z + f.z * 1.9;
+
+  /* 360° Surround LiDAR / Radar Scanner (36 Rays) */
+  const N_RAYS = 36;
   const rayHitDistances = [];
-  const N_FAN = 15;
-  for (let k = 0; k < N_FAN; k++) {
-    const a = (-24 + (48 / (N_FAN - 1)) * k) * Math.PI / 180;
+  let fwdMin = 999, leftMin = 999, rightMin = 999, rearMin = 999;
+  let nearest = null;
+
+  for (let k = 0; k < N_RAYS; k++) {
+    const a = (k * (360 / N_RAYS)) * Math.PI / 180;
     const ca = Math.cos(a), sa = Math.sin(a);
+    // Relative direction in world coordinates
     const dx = f.x * ca - f.z * sa, dz = f.x * sa + f.z * ca;
-    const h = castRay(fanOx, 0.55, fanOz, dx, dz, SENS.radar.far);
+    const isFwd = ca > 0.65;
+    const isRear = ca < -0.65;
+    const rayMax = isFwd ? 75 : isRear ? 45 : 28;
+    const ox = dyn.x + f.x * (ca * 1.8), oz = dyn.z + f.z * (ca * 1.8);
+
+    const h = castRay(ox, 0.55, oz, dx, dz, rayMax);
     if (h) {
       rayHitDistances.push(h.distance);
-      const wx = fanOx + dx * h.distance, wz = fanOz + dz * h.distance;
-      const latOff = Math.sin(a) * h.distance;
-      if (Math.abs(latOff) < 2.4 && (!nearest || h.distance < nearest.dist))
-        nearest = { dist: h.distance, latOff, tag: tagOf(h.object) };
-      hits.push({ x: wx, z: wz, tag: tagOf(h.object) });
+      const wx = ox + dx * h.distance, wz = oz + dz * h.distance;
+      const tag = tagOf(h.object);
+      hits.push({ x: wx, z: wz, tag, dist: h.distance, angle: a });
+
+      // Sector proximity grouping
+      if (isFwd) {
+        if (h.distance < fwdMin) fwdMin = h.distance;
+        if (!nearest || h.distance < nearest.dist) nearest = { dist: h.distance, latOff: Math.sin(a) * h.distance, tag };
+      } else if (isRear) {
+        if (h.distance < rearMin) rearMin = h.distance;
+      } else if (sa < 0) {
+        if (h.distance < leftMin) leftMin = h.distance;
+      } else {
+        if (h.distance < rightMin) rightMin = h.distance;
+      }
     } else {
-      rayHitDistances.push(65);
+      rayHitDistances.push(rayMax);
     }
   }
+
   if (sensorVis) sensorVis.update(rayHitDistances);
   SENS.radar.nearest = nearest;
+
+  // Compute Time-To-Collision (TTC) for forward closing objects
+  const fwdClosingSpeed = Math.max(dyn.u, 0.5);
+  const fwdTtc = fwdMin < 70 ? fwdMin / fwdClosingSpeed : 99;
+  SENS.proximity = {
+    fwd: fwdMin, left: leftMin, right: rightMin, rear: rearMin,
+    min: Math.min(fwdMin, leftMin, rightMin, rearMin),
+    fwdTtc
+  };
   /* ultrasonic — 6 fixed bumper channels, capped at 7 m when clear.
      Cast at 0.55 m so rails/barrels/curbs are all in the beam band. */
   for (let k = 0; k < ULTRA_DIRS.length; k++) {
@@ -2373,6 +2424,36 @@ function computePolicy(dt, proj) {
       out.alert = lead.seen ? 'FCW · LEAD VEHICLE BRAKING' : 'FCW · OCCLUDED VEHICLE BRAKING — RADIO ALERT';
     } else if (lg < desired * 1.5 && !out.alert) {
       out.alert = 'ACC · FOLLOWING — SPEED CONTROL';
+    }
+  }
+
+  /* ---- 360° SURROUND RAY AEB: Instant Emergency Stop on Proximity Breach ---- */
+  const prox = SENS.proximity;
+  if (prox && adas.aeb) {
+    if (prox.fwd < 7.0 || (prox.fwd < 20 && prox.fwdTtc < 1.35)) {
+      emergency = true;
+      evasiveHard = true;
+      vt = 0;
+      out.aebActive = true;
+      out.alert = `AEB · CRITICAL PROXIMITY (${prox.fwd.toFixed(1)}M) — FULL BRAKE`;
+      out.sev = 'red';
+    } else if (prox.fwd < 16.0 || (prox.fwd < 32 && prox.fwdTtc < 2.6)) {
+      const vSafe = Math.max(0, u * (prox.fwd / 16.0));
+      vt = Math.min(vt, vSafe);
+      out.aebActive = true;
+      if (!out.alert) {
+        out.alert = `PROXIMITY WARNING (${prox.fwd.toFixed(1)}M) — DECELERATING`;
+        out.sev = 'amber';
+      }
+    }
+    // Side Blind Spot Collision Inhibit
+    if (prox.left < 2.2 && out.steer > 0.05) {
+      out.steer = Math.min(out.steer, 0.02);
+      if (!out.alert) { out.alert = 'BLIND SPOT · LEFT PROXIMITY'; out.sev = 'amber'; }
+    }
+    if (prox.right < 2.2 && out.steer < -0.05) {
+      out.steer = Math.max(out.steer, -0.02);
+      if (!out.alert) { out.alert = 'BLIND SPOT · RIGHT PROXIMITY'; out.sev = 'amber'; }
     }
   }
 

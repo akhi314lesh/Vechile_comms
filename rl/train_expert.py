@@ -1,7 +1,6 @@
 """
 rl/train_expert.py — Generate high-quality pre-trained weights via behavioral cloning.
-
-Vectorized NumPy data generation for speed. Trains on 8 driving scenarios.
+Fixed steering conventions and longitudinal control matching simulator physics.
 """
 
 import os, math, sys
@@ -21,9 +20,15 @@ from ppo import PPOTrainer, ActorCritic
 # ─── Expert controllers ───
 
 def expert_steer_vec(lat, yaw_rate, kappa, speed):
-    """Vectorized Stanley-style steering."""
-    k_lat = 2.0 / np.maximum(1.0, speed * 0.15)
-    steer = -k_lat * lat - 0.45 * yaw_rate + kappa * np.maximum(3.0, speed) * 0.65
+    """
+    Stanley steering matching Three.js coordinate system in index.html:
+      +lat = car is to the right of lane center -> steer > 0 (turn left back to center)
+      -lat = car is to the left of lane center  -> steer < 0 (turn right back to center)
+      +yaw_rate = car rotating left -> damping steer < 0 (turn right to stabilize)
+      +kappa = road curves left -> feedforward steer > 0 (turn left along curve)
+    """
+    k_lat = 0.42 / np.maximum(1.0, speed * 0.08)
+    steer = k_lat * lat - 0.28 * yaw_rate + kappa * np.maximum(3.5, speed) * 0.60
     return np.clip(steer, -1.0, 1.0)
 
 
@@ -41,18 +46,18 @@ def expert_long_vec(speed, v_des, lead_dist, lead_rel_speed, is_braking):
     closing = (lead_rel_speed < -0.5) & ~emerg
     ttc = np.full(n, 99.0)
     ttc[closing] = lead_dist[closing] / np.maximum(0.01, -lead_rel_speed[closing])
-    ttc_brake = (ttc < 1.5) & ~emerg
-    brake[ttc_brake] = np.clip(1.5 / np.maximum(0.1, ttc[ttc_brake]), 0.6, 1.0)
+    ttc_brake = (ttc < 1.8) & ~emerg
+    brake[ttc_brake] = np.clip(1.8 / np.maximum(0.1, ttc[ttc_brake]), 0.6, 1.0)
 
     # V2V braking warning
-    v2v_warn = is_braking & (lead_dist < 40.0) & ~emerg & ~ttc_brake
+    v2v_warn = is_braking & (lead_dist < 45.0) & ~emerg & ~ttc_brake
     v_des_adj = v_des.copy()
-    v_des_adj[v2v_warn] = np.minimum(v_des[v2v_warn], speed[v2v_warn] * 0.6)
+    v_des_adj[v2v_warn] = np.minimum(v_des[v2v_warn], speed[v2v_warn] * 0.5)
 
     # IDM following
     has_lead = (lead_dist < 999) & ~emerg & ~ttc_brake
-    s_star = 4.0 + speed * 1.5 + speed * np.maximum(0, -lead_rel_speed) / (2 * math.sqrt(6.0))
-    s_star = np.maximum(s_star, 4.0)
+    s_star = 5.0 + speed * 1.6 + speed * np.maximum(0, -lead_rel_speed) / (2 * math.sqrt(6.0))
+    s_star = np.maximum(s_star, 5.0)
     too_close = has_lead & (lead_dist < s_star)
     v_des_adj[too_close] = np.minimum(v_des_adj[too_close],
                                        speed[too_close] * (lead_dist[too_close] / s_star[too_close]) ** 2)
@@ -60,13 +65,13 @@ def expert_long_vec(speed, v_des, lead_dist, lead_rel_speed, is_braking):
     # Speed control (only for non-emergency/ttc cases)
     normal = ~emerg & ~ttc_brake
     speed_err = v_des_adj - speed
-    accel = normal & (speed_err > 0.3)
-    decel = normal & (speed_err < -1.5)
+    accel = normal & (speed_err > 0.2)
+    decel = normal & (speed_err < -1.0)
     cruise = normal & ~accel & ~decel
 
-    throttle[accel] = np.clip(speed_err[accel] / 5.0, 0.08, 0.85)
-    brake[decel] = np.clip(-speed_err[decel] / 8.0, 0.08, 0.7)
-    throttle[cruise] = 0.12
+    throttle[accel] = np.clip(speed_err[accel] * 0.35, 0.15, 0.9)
+    brake[decel] = np.clip(-speed_err[decel] * 0.25, 0.1, 0.7)
+    throttle[cruise] = 0.22  # maintain cruising momentum
 
     # Zero throttle where braking
     throttle[brake > 0.05] = 0.0
@@ -174,7 +179,7 @@ def generate_dataset(n_total=500000):
         ax = throttle * 3.5 - brake * 6.0 - 0.015 * speed
         ay = yaw_rate * speed * 0.35
 
-        # Build observations
+        # Build observations matching index.html _buildObs() exactly
         obs = np.zeros((actual_n, 97), dtype=np.float32)
         obs[:, 0] = np.clip(np.abs(speed) / 50.0, 0, 1)
         obs[:, 1] = np.clip(ax / 12.0, -1, 1)
@@ -182,7 +187,7 @@ def generate_dataset(n_total=500000):
         obs[:, 3] = np.clip(yaw_rate / 2.6, -1, 1)
         obs[:, 4] = 0.0  # slip
         obs[:, 5] = np.clip(lat / 5.0, -1, 1)
-        obs[:, 6] = np.clip(steer * 0.9, -1, 1)   # prev steer (correlated)
+        obs[:, 6] = np.clip(steer * 0.9, -1, 1)   # prev steer
         obs[:, 7] = np.clip(throttle * 0.85, 0, 1) # prev throttle
         obs[:, 8] = np.clip(brake * 0.85, 0, 1)    # prev brake
         obs[:, 9] = np.clip(kappa / 0.1, -1, 1)
@@ -190,7 +195,7 @@ def generate_dataset(n_total=500000):
         obs[:, 11] = 0.5  # lanes_o
         obs[:, 12] = 0.0  # signal
 
-        # Object slots (up to 3 populated depending on scenario)
+        # Object slots
         has_obj = lead_dist < 900
         for slot in range(3):
             base = 13 + slot * 7
@@ -200,7 +205,6 @@ def generate_dataset(n_total=500000):
                 rv = lead_rel
                 brk = is_braking
             else:
-                # Additional objects with random parameters
                 mask = np.random.rand(actual_n) < 0.3
                 d = np.random.uniform(20, 120, actual_n).astype(np.float32)
                 rv = np.random.uniform(-8, 5, actual_n).astype(np.float32)
@@ -235,7 +239,6 @@ def generate_dataset(n_total=500000):
 
         print(f"  {name:25s} — {actual_n:>7,} samples", flush=True)
 
-    # Fill any remaining
     if idx < n_total:
         obs_all = obs_all[:idx]
         act_all = act_all[:idx]
@@ -251,7 +254,6 @@ def main():
     trainer = PPOTrainer(obs_dim=97, act_dim=3, device=device)
     model = trainer.model
 
-    # Generate data (vectorized — should take ~2 seconds)
     obs_np, act_np, val_np = generate_dataset(500000)
     total = len(obs_np)
 
@@ -259,7 +261,6 @@ def main():
     act_data = torch.FloatTensor(act_np)
     val_data = torch.FloatTensor(val_np)
 
-    # 95/5 train/val split
     perm = torch.randperm(total)
     n_val = total // 20
     train_idx, val_idx = perm[n_val:], perm[:n_val]
@@ -283,7 +284,6 @@ def main():
             b_act = b_act.to(device)
             b_val = b_val.to(device)
 
-            # Noise augmentation
             b_obs_aug = b_obs + torch.randn_like(b_obs) * 0.012
 
             features = model.shared(b_obs_aug)
@@ -305,7 +305,6 @@ def main():
 
         scheduler.step()
 
-        # Validation
         model.eval()
         vl, vn = 0.0, 0
         with torch.no_grad():
@@ -325,11 +324,9 @@ def main():
         print(f"  Epoch {epoch:2d}/25 — Actor: {avg_train:.5f} | Critic: {ep_critic/n:.5f} | "
               f"Val: {avg_val:.5f} | LR: {scheduler.get_last_lr()[0]:.2e}{tag}", flush=True)
 
-    # Low exploration noise for evaluation
     with torch.no_grad():
         model.actor_log_std.data.fill_(-2.0)
 
-    # Save
     log_dir = Path('rl/logs')
     log_dir.mkdir(parents=True, exist_ok=True)
     for name in ['best_model.pt', 'pretrained_model.pt', 'final_model.pt']:
