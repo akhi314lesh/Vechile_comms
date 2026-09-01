@@ -3698,12 +3698,37 @@ function updatePlayer(dt) {
     let throttle = keys.KeyW || keys.ArrowUp ? 1 : 0;
     let brake = keys.KeyS || keys.ArrowDown ? 1 : 0;
     if (dyn.u < 0.4 && brake && !throttle) { throttle = -0.4; brake = 0; }
-    /* ANALOGUE steering: ramped attack (speed-scaled) + release */
+    
+    /* Responsive & Easy Steering Controls */
     const input = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    const attack = 2.8 / (1 + Math.abs(dyn.u) / 22);
-    const release = 4.6;
-    if (input !== 0) manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
-    else manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
+    const speed = Math.abs(dyn.u);
+    const attack = 4.2 / (1 + speed / 32);
+    const release = 8.2;
+    
+    if (input !== 0) {
+      manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
+    } else {
+      manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
+      // Gentle auto-centering when driver releases keys (helps stay in lane effortlessly)
+      if (aids.on && speed > 2.0 && onP) {
+        const curLane = nearestLaneIdx(T, proj.lat);
+        const latTarget = T.laneLat ? T.laneLat('fwd', curLane) : 0;
+        const latErr = proj.lat - latTarget;
+        const headingErr = wrapAngle(dyn.psi - proj.psi);
+        const kLat = 0.22 / Math.max(1.0, speed * 0.08);
+        const kHead = 0.48;
+        const kCurv = (proj.kappa || 0) * (2.8 + speed * 0.14);
+        const assistSteer = clamp(kLat * latErr - kHead * headingErr + kCurv, -0.35, 0.35);
+        manSteer.v = clamp(assistSteer, -0.35, 0.35);
+      }
+    }
+    
+    // Safety Proximity Shield: gentle brake assist if about to hit wall/car
+    const prox = SENS.proximity;
+    if (aids.on && prox && prox.fwd < 5.0 && speed > 2.0) {
+      brake = Math.max(brake, 0.95);
+      throttle = 0.0;
+    }
     ctrl = { steer: manSteer.v, throttle, brake };
     assist = null;
   } else {
