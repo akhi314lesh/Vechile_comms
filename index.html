@@ -2812,14 +2812,6 @@ class LaneKeepController {
   }
 }
 
-    const speedSlewFactor = clamp(1.0 - (v / 45.0) * 0.35, 0.65, 1.0);
-    const maxStep = this.maxSlew * speedSlewFactor * this.dt;
-    const cmd = clamp(raw, -1.0, 1.0);
-    this.steer = clamp(this.steer + clamp(cmd - this.steer, -maxStep, maxStep), -1.0, 1.0);
-    return this.steer;
-  
-
-
 // Controller instances
 const longPID = new LongitudinalPID();
 const idmFollower = new IDMController();
