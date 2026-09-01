@@ -231,7 +231,12 @@
     <div class="brow"><button class="btn" id="btnEdit">EDIT TRACK · E</button><button class="btn" id="btnDefault">DEFAULT</button></div>
   </div>
   <div class="sec">
-    <label>VEHICLES <button class="btn" id="addVeh">+ ADD</button></label>
+    <label>VEHICLES</label>
+    <div class="brow" style="margin-bottom:6px">
+      <button class="btn" id="addVeh">+ ADD</button>
+      <button class="btn" id="btnDense">DENSE TRAFFIC</button>
+      <button class="btn" id="btnClearVeh">CLEAR</button>
+    </div>
     <div id="vlist"></div>
     <div class="hint">RF = V2V RADIO · RF-OFF CARS + OBSTACLES + CROSS TRAFFIC ARE RADIO-INVISIBLE (RAY-SENSED ONLY)</div>
   </div>
@@ -2763,15 +2768,15 @@ class LaneChangeStateMachine {
 class LaneKeepController {
   constructor(config = {}) {
     this.dt = config.dt ?? 1.0 / 30.0;
-    this.kLatGain = config.kLatGain ?? 0.38;
+    this.kLatGain = config.kLatGain ?? 0.44;
     this.kLatSpeed = config.kLatSpeed ?? 0.055;
-    this.kHead = config.kHead ?? 0.65;
+    this.kHead = config.kHead ?? 0.72;
     this.wheelbase = config.wheelbase ?? 3.2;
     this.kUndersteer = config.kUndersteer ?? 0.16;
-    this.kDamp = config.kDamp ?? 0.14;
-    this.maxSlew = config.maxSlew ?? 4.5;
-    this.deadbandLat = config.deadbandLat ?? 0.04;
-    this.deadbandHead = config.deadbandHead ?? 0.015;
+    this.kDamp = config.kDamp ?? 0.12;
+    this.maxSlew = config.maxSlew ?? 5.5;
+    this.deadbandLat = config.deadbandLat ?? 0.02;
+    this.deadbandHead = config.deadbandHead ?? 0.010;
     this.steer = 0.0;
   }
   reset(steer = 0.0) {
@@ -2787,7 +2792,7 @@ class LaneKeepController {
     let effectiveKLat = kLat;
     const isConverging = (eLat > 0 && wrappedHeading < -0.01) || (eLat < 0 && wrappedHeading > 0.01);
     if (isConverging && Math.abs(eLat) < 0.45) {
-      effectiveKLat *= 0.65;
+      effectiveKLat *= 0.60;
     }
 
     let raw = effectiveKLat * eLat - this.kHead * wrappedHeading + ff;
@@ -2806,6 +2811,14 @@ class LaneKeepController {
     return this.steer;
   }
 }
+
+    const speedSlewFactor = clamp(1.0 - (v / 45.0) * 0.35, 0.65, 1.0);
+    const maxStep = this.maxSlew * speedSlewFactor * this.dt;
+    const cmd = clamp(raw, -1.0, 1.0);
+    this.steer = clamp(this.steer + clamp(cmd - this.steer, -maxStep, maxStep), -1.0, 1.0);
+    return this.steer;
+  
+
 
 // Controller instances
 const longPID = new LongitudinalPID();
@@ -3650,6 +3663,8 @@ function initUI(env) {
     });
   }
   $('addVeh').onclick = () => { env.api.addAI({}); renderVehicles(); toast('VEHICLE ADDED — DRAG ITS MARKER IN THE EDITOR'); };
+  $('btnDense').onclick = () => { populateDenseTraffic(); renderVehicles(); toast('DENSE TRAFFIC SPAWNED (18 VEHICLES)'); };
+  $('btnClearVeh').onclick = () => { clearScenario(); renderVehicles(); toast('ALL TRAFFIC CLEARED'); };
   $('btnReset').onclick = () => env.api.resetRun();
   $('crashReset').onclick = () => env.api.resetRun();
   $('btnSave').onclick = () => env.api.save();
@@ -3825,10 +3840,60 @@ function clearScenario() { while (scenario.length) removeAI(scenario[scenario.le
 function defaultScenario() {
   clearScenario();
   const rel = m => (((player.spawnU + m / T.L) % 1 + 1) % 1);
-  addAI({ name: 'V2V-ERRATIC', hatch: true, paint: 0xe8631e, dir: 'fwd', lane: 0, spawnU: rel(30), speed: 14, behavior: 'erratic', radio: true });
-  addAI({ name: 'V2V-NORMAL', dir: 'onc', lane: 0, spawnU: rel(180), speed: 15, behavior: 'normal', radio: true });
-  addAI({ name: 'NOV2V-ERRATIC', hatch: true, paint: 0xc9ced4, dir: 'fwd', lane: 0, spawnU: rel(105), speed: 8, behavior: 'erratic', radio: false });
-  addAI({ name: 'NOV2V-NORMAL', dir: 'fwd', lane: 1, spawnU: rel(60), speed: 10.5, behavior: 'normal', radio: false });
+  const oncAllowed = T.def.lanesO > 0;
+
+  // Forward Lane 0 Traffic (Distributed along track)
+  addAI({ name: 'V2V-LEAD-1', hatch: true, paint: 0xe8631e, dir: 'fwd', lane: 0, spawnU: rel(35), speed: 13.0, behavior: 'normal', radio: true });
+  addAI({ name: 'NOV2V-SLOW-1', hatch: true, paint: 0xc9ced4, dir: 'fwd', lane: 0, spawnU: rel(115), speed: 9.5, behavior: 'normal', radio: false });
+  addAI({ name: 'V2V-SEDAN-1', paint: 0x39404a, dir: 'fwd', lane: 0, spawnU: rel(210), speed: 13.8, behavior: 'normal', radio: true });
+  addAI({ name: 'NOV2V-ERRATIC', hatch: true, paint: 0x59626e, dir: 'fwd', lane: 0, spawnU: rel(330), speed: 11.5, behavior: 'erratic', radio: false });
+  addAI({ name: 'V2V-CRUISER', paint: 0x9aa2ac, dir: 'fwd', lane: 0, spawnU: rel(460), speed: 13.2, behavior: 'normal', radio: true });
+
+  // Forward Lane 1 Traffic
+  addAI({ name: 'NOV2V-LANE1-FAST', paint: 0x7f8894, dir: 'fwd', lane: 1, spawnU: rel(65), speed: 14.5, behavior: 'normal', radio: false });
+  addAI({ name: 'V2V-LANE1-MID', hatch: true, paint: 0x225588, dir: 'fwd', lane: 1, spawnU: rel(165), speed: 12.8, behavior: 'normal', radio: true });
+  addAI({ name: 'NOV2V-LANE1-SLOW', paint: 0x884422, dir: 'fwd', lane: 1, spawnU: rel(275), speed: 10.2, behavior: 'normal', radio: false });
+  addAI({ name: 'V2V-LANE1-CHASE', hatch: true, paint: 0x44aa88, dir: 'fwd', lane: 1, spawnU: rel(400), speed: 14.0, behavior: 'normal', radio: true });
+
+  // Oncoming Traffic
+  if (oncAllowed) {
+    addAI({ name: 'V2V-ONCOMING-1', dir: 'onc', lane: 0, spawnU: rel(80), speed: 14.0, behavior: 'normal', radio: true });
+    addAI({ name: 'NOV2V-ONCOMING-2', dir: 'onc', lane: 1, spawnU: rel(190), speed: 13.0, behavior: 'normal', radio: false });
+    addAI({ name: 'V2V-ONCOMING-3', hatch: true, dir: 'onc', lane: 0, spawnU: rel(320), speed: 14.2, behavior: 'normal', radio: true });
+    addAI({ name: 'NOV2V-ONCOMING-4', dir: 'onc', lane: 1, spawnU: rel(460), speed: 12.5, behavior: 'normal', radio: false });
+  }
+}
+
+function populateDenseTraffic() {
+  clearScenario();
+  const rel = m => (((player.spawnU + m / T.L) % 1 + 1) % 1);
+  const oncAllowed = T.def.lanesO > 0;
+  const numCars = 18;
+  const spacing = T.L / numCars;
+
+  for (let i = 0; i < numCars; i++) {
+    const isFwd = (!oncAllowed) || (i % 3 !== 2);
+    const dir = isFwd ? 'fwd' : 'onc';
+    const numLanes = dir === 'fwd' ? T.def.lanesF : T.def.lanesO;
+    const lane = i % numLanes;
+    const dist = (i + 0.5) * spacing + (Math.random() - 0.5) * 10;
+    const speed = 9.0 + (i % 5) * 1.2; // 32 to 50 km/h
+    const radio = (i % 2 === 0);
+    const hatch = (i % 3 === 0);
+    const behavior = (i % 5 === 4) ? 'erratic' : 'normal';
+
+    addAI({
+      name: `${radio ? 'V2V' : 'NOV2V'}-${dir.toUpperCase()}-${i + 1}`,
+      hatch,
+      paint: PAINTS[i % PAINTS.length],
+      dir,
+      lane,
+      spawnU: rel(dist),
+      speed,
+      behavior,
+      radio
+    });
+  }
 }
 function setAIBrake(ai, on) {
   ai.tailM.emissiveIntensity = on ? 5 : 1.1;
