@@ -159,13 +159,13 @@
   <div class="sec">
     <label>DRIVE MODE</label>
     <div class="seg">
-      <button id="mManual" class="btn on">MANUAL</button>
-      <button id="mV2v" class="btn">V2V ASSIST</button>
-      <button id="mRlTrain" class="btn">RL TRAIN</button>
-      <button id="mRlEval" class="btn">RL EVAL</button>
+      <button id="mDriving" class="btn on">DRIVING</button>
+      <button id="mPerception" class="btn">PERCEPTION</button>
+      <button id="mV2v" class="btn">V2V</button>
+      <button id="mDebug" class="btn">DEBUG</button>
     </div>
     <div class="crow"><span>DRIVER AIDS · ESC+ABS+EBD</span><button id="aidsTgl" class="tgl on">ON</button></div>
-    <div class="hint" id="modeHint">EYES ONLY · TOGGLE AIDS OFF FOR FULLY RAW PHYSICS</div>
+    <div class="hint" id="modeHint">WASD TO DRIVE · AIDS TOGGLEABLE</div>
   </div>
   <div class="sec" id="rlSec" style="display:none">
     <label>RL AGENT CONTROLS</label>
@@ -2850,26 +2850,37 @@ function initUI(env) {
   }
   function updateModeUI() {
     const m = env.getMode();
-    $('mManual').classList.toggle('on', m === 'manual');
-    $('mV2v').classList.toggle('on', m === 'v2v');
-    $('mRlTrain').classList.toggle('on', m === 'rl_train');
-    $('mRlEval').classList.toggle('on', m === 'rl_eval');
-    $('adasSec').classList.toggle('dim', m !== 'v2v');
+    const isDriving = m === 'driving' || m === 'manual';
+    const isPerception = m === 'perception';
+    const isV2v = m === 'v2v';
+    const isDebug = m === 'debug';
+    const isRl = m === 'rl_train' || m === 'rl_eval';
+
+    if ($('mDriving')) $('mDriving').classList.toggle('on', isDriving);
+    if ($('mPerception')) $('mPerception').classList.toggle('on', isPerception);
+    if ($('mV2v')) $('mV2v').classList.toggle('on', isV2v);
+    if ($('mDebug')) $('mDebug').classList.toggle('on', isDebug);
+    
+    $('adasSec').classList.toggle('dim', !isV2v);
+    $('sensorSec').classList.toggle('dim', !isPerception && !isDebug);
     const rlSec = $('rlSec');
-    if (rlSec) rlSec.style.display = (m === 'rl_train' || m === 'rl_eval') ? 'block' : 'none';
+    if (rlSec) rlSec.style.display = isRl ? 'block' : 'none';
     $('aidsTgl').classList.toggle('on', env.aids.on);
     $('aidsTgl').textContent = env.aids.on ? 'ON' : 'OFF';
+
     let hint = '';
-    if (m === 'manual') hint = 'EYES ONLY · TOGGLE AIDS OFF FOR FULLY RAW PHYSICS';
-    else if (m === 'v2v') hint = 'BSM LINK · ADAS + V2V · W/S = CRUISE · A/D = LANE CHANGE';
+    if (isDriving) hint = 'DRIVING MODE · WASD PEDALS & STEERING · FULL PHYSICS';
+    else if (isPerception) hint = 'PERCEPTION MODE · SENSOR RAYCASTS · RADAR SWEEP · CAMERA FEED';
+    else if (isV2v) hint = 'V2V AUTONOMOUS MODE · ADAS AUTOPILOT · W/S = CRUISE · A/D = LANE CHANGE';
+    else if (isDebug) hint = 'DEBUG TELEMETRY · TIRE FRICTION CIRCLES · SLIP ANGLES · FORCES';
     else if (m === 'rl_train') hint = 'RL TRAINING MODE · CONNECT PYTHON TRAINER VIA WEBSOCKET';
     else if (m === 'rl_eval') hint = 'RL EVALUATION MODE · RUNNING RL POLICY ON PERCEPTION OBS';
     $('modeHint').textContent = hint;
   }
-  $('mManual').onclick = () => env.api.setMode('manual');
-  $('mV2v').onclick = () => env.api.setMode('v2v');
-  const btnRlTr = $('mRlTrain'); if (btnRlTr) btnRlTr.onclick = () => env.api.setMode('rl_train');
-  const btnRlEv = $('mRlEval'); if (btnRlEv) btnRlEv.onclick = () => env.api.setMode('rl_eval');
+  if ($('mDriving')) $('mDriving').onclick = () => env.api.setMode('driving');
+  if ($('mPerception')) $('mPerception').onclick = () => env.api.setMode('perception');
+  if ($('mV2v')) $('mV2v').onclick = () => env.api.setMode('v2v');
+  if ($('mDebug')) $('mDebug').onclick = () => env.api.setMode('debug');
 
   // RL Environment & WebSocket Client Setup
   rlEnv = new V2VRLEnvironment({ headless: false });
@@ -3365,8 +3376,18 @@ function setMode(m) {
   resetALC();
   manSteer.v = 0;
   if (m === 'v2v' && Math.abs(dyn.u) > 2) player.cruise = Math.abs(dyn.u);
+  if (m === 'perception' || m === 'debug') SENS.on = true;
   updateModeUI();
-  toast(m === 'manual' ? 'MANUAL MODE' : 'V2V ASSIST ENGAGED');
+  const toastMsgs = {
+    driving: 'DRIVING MODE · WASD ACTIVE',
+    manual: 'DRIVING MODE · WASD ACTIVE',
+    perception: 'PERCEPTION SUITE ENGAGED',
+    v2v: 'V2V AUTONOMOUS ASSIST ENGAGED',
+    debug: 'DEBUG TELEMETRY ACTIVE',
+    rl_train: 'RL TRAINING MODE',
+    rl_eval: 'RL EVALUATION MODE'
+  };
+  toast(toastMsgs[m] || `${m.toUpperCase()} MODE`);
 }
 function setHeadlights(on) {
   headlightsOn = on;
@@ -3407,7 +3428,7 @@ function loadScenario() {
   rebuild();
   clearScenario();
   (data.vehicles || []).forEach(v => addAI(v));
-  mode = data.mode === 'v2v' ? 'v2v' : 'manual';
+  mode = data.mode === 'v2v' ? 'v2v' : 'driving';
   resetRun();
   renderVehicles();
   syncTrackUI();
@@ -3428,8 +3449,7 @@ const { toast, renderVehicles, syncTrackUI, updateModeUI } = initUI({
     setMode, rebuild, resetRun, restoreDefault,
     addAI, removeAI, placeAI,
     save: saveScenario, load: loadScenario,
-    setFog: setFogDensity,
-    toggleEditor: () => editor.isOpen() ? editor.close() : editor.open()
+    setFogDensity, setHeadlights
   }
 });
 makePolicyApi();
@@ -3438,8 +3458,8 @@ makePolicyApi();
 function updatePlayer(dt) {
   const proj = T.project(dyn.x, dyn.z, player.hint);
   player.hint = proj.idx;
-  let onP = Math.abs(proj.lat) < T.metrics.pavedHalf + 0.35;
-  if (!onP) {
+  let onP = Math.abs(proj.lat) < (T.metrics ? T.metrics.pavedHalf : 10) + 0.35;
+  if (!onP && T.crossFrames) {
     for (const cf of T.crossFrames) {
       const dx = dyn.x - cf.cx, dz = dyn.z - cf.cz;
       const dT = Math.abs(dx * cf.tx + dz * cf.tz);
@@ -3450,7 +3470,7 @@ function updatePlayer(dt) {
   onPavement = onP;
   const mu = onP ? 0.92 : 0.5;
   let ctrl;
-  if (mode === 'manual') {
+  if (mode === 'driving' || mode === 'manual' || mode === 'perception' || mode === 'debug') {
     let throttle = keys.KeyW || keys.ArrowUp ? 1 : 0;
     let brake = keys.KeyS || keys.ArrowDown ? 1 : 0;
     if (dyn.u < 0.4 && brake && !throttle) { throttle = -0.4; brake = 0; }
