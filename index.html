@@ -2346,23 +2346,141 @@ function updateCameraFeed() {
 
 /* ================================================================
    [ADAS CONTROLLER STACK] High-Precision Deterministic Autonomous Driving
-   1. LongitudinalPID       — Anti-windup PID speed & acceleration controller
-   2. IDMController         — Intelligent Driver Model for car following & headway
-   3. CurvatureGovernor     — Proactive curve deceleration envelope
-   4. LaneChangeStateMachine — Deterministic multi-state lane changing
-   5. StanleySteering       — Cross-track + heading + curvature feedforward
+   1. StoppingDistanceModel — Kinematic reaction + braking distance prediction
+   2. CurvatureGovernor     — Proactive curve deceleration envelope
+   3. IDMController         — Intelligent Driver Model with multi-stage TTC following
+   4. LongitudinalPID       — Anti-windup PID speed & acceleration controller
+   5. LaneChangeStateMachine — Deterministic multi-state lane changing & auto-pass
+   6. StanleySteering       — Curvature-lookahead cross-track + heading alignment
    ================================================================ */
 function createADAS() { return { lka: true, aeb: true, gov: true, alc: true }; }
 
+function calculateClosingDynamics(ego, target) {
+  const dx = (target.wx ?? target.x ?? 0) - (ego.x ?? 0);
+  const dz = (target.wz ?? target.z ?? 0) - (ego.z ?? 0);
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-3) return { dist: 0, closingVelocity: 0, ttc: Infinity, isClosing: false };
+
+  const uDirX = dx / dist, uDirZ = dz / dist;
+  const egoVx = -(ego.u ?? 0) * Math.sin(ego.psi ?? 0);
+  const egoVz = -(ego.u ?? 0) * Math.cos(ego.psi ?? 0);
+  const targetHeading = target.heading ?? target.psi ?? ego.psi ?? 0;
+  const targetSpeed = target.vAlong ?? target.speed ?? target.v ?? 0;
+  const targetVx = -targetSpeed * Math.sin(targetHeading);
+  const targetVz = -targetSpeed * Math.cos(targetHeading);
+
+  const relVx = egoVx - targetVx;
+  const relVz = egoVz - targetVz;
+  const closingVelocity = relVx * uDirX + relVz * uDirZ;
+  const isClosing = closingVelocity > 0.15;
+  const ttc = isClosing ? dist / closingVelocity : Infinity;
+  return { dist, closingVelocity, ttc, isClosing };
+}
+
+class StoppingDistanceModel {
+  constructor(config = {}) {
+    this.reactionTime = config.reactionTime ?? 0.65;
+    this.comfDecel = config.comfDecel ?? 2.8;
+    this.safetyMargin = config.safetyMargin ?? 6.0;
+  }
+  calculateSafeSpeed(availableDistance, targetSpeed = 0) {
+    const dAvail = Math.max(0, availableDistance - this.safetyMargin);
+    if (dAvail <= 0.5) return 0.0;
+    const a = this.comfDecel;
+    const tr = this.reactionTime;
+    const c = 2 * a * dAvail + targetSpeed * targetSpeed;
+    const disc = (2 * a * tr) * (2 * a * tr) + 4 * c;
+    const vSafe = (-2 * a * tr + Math.sqrt(Math.max(0, disc))) / 2;
+    return Math.max(0, vSafe);
+  }
+}
+
+class CurvatureGovernor {
+  constructor(config = {}) {
+    this.mu = config.mu ?? 0.88;
+    this.latAccLimit = config.latAcc ?? 3.8;
+    this.comfDecel = config.comfDecel ?? 2.4;
+    this.lookaheadDist = config.lookahead ?? 90.0;
+  }
+  evaluate(track, egoS, currentSpeed, cruiseSpeed) {
+    if (!track || typeof track.kappaAt !== 'function') return { safeSpeed: cruiseSpeed, lookaheadK: 0, governorActive: false };
+    let minAllowedSpeed = cruiseSpeed;
+    let governorActive = false;
+    const scanEnd = Math.min(this.lookaheadDist, Math.max(35, currentSpeed * 3.6 + 25));
+    const dLook = Math.max(8.0, currentSpeed * 0.65);
+    const lookaheadK = track.kappaAt ? Math.abs(track.kappaAt((egoS + dLook) % (track.L || 1000))) : 0;
+
+    for (let d = 4; d <= scanEnd; d += 5) {
+      const sAhead = (egoS + d) % (track.L || 1000);
+      const k = Math.abs(track.kappaAt(sAhead));
+      if (k < 1e-4) continue;
+      const vCurve = Math.sqrt(Math.min(this.latAccLimit, this.mu * GRAV * 0.55) / k);
+      const vApproach = Math.sqrt(vCurve * vCurve + 2 * this.comfDecel * d);
+      if (vApproach < minAllowedSpeed) {
+        minAllowedSpeed = vApproach;
+        governorActive = true;
+      }
+    }
+    return {
+      safeSpeed: Math.max(3.5, Math.min(cruiseSpeed, minAllowedSpeed)),
+      lookaheadK,
+      governorActive: governorActive && minAllowedSpeed < cruiseSpeed - 1.2
+    };
+  }
+}
+
+class IDMController {
+  constructor(config = {}) {
+    this.s0 = config.s0 ?? 6.0;
+    this.timeHeadway = config.timeHeadway ?? 1.5;
+    this.maxAccel = config.maxAccel ?? 2.8;
+    this.comfDecel = config.comfDecel ?? 3.2;
+    this.delta = config.delta ?? 4.0;
+  }
+  evaluate(egoSpeed, cruiseSpeed, leadDist, leadRelSpeed, isLeadBraking = false, ttc = Infinity) {
+    egoSpeed = Math.max(0.01, egoSpeed);
+    cruiseSpeed = Math.max(0.01, cruiseSpeed);
+    if (!Number.isFinite(leadDist) || leadDist > 180.0) {
+      return { targetSpeed: cruiseSpeed, desiredGap: this.s0, stage: 'FREE' };
+    }
+    const deltaV = -leadRelSpeed;
+    const sStar = this.s0 + egoSpeed * this.timeHeadway + (egoSpeed * deltaV) / (2 * Math.sqrt(this.maxAccel * this.comfDecel));
+    const effectiveGap = Math.max(0.5, leadDist);
+    const interactionTerm = Math.pow(sStar / effectiveGap, 2);
+
+    let targetSpeed = cruiseSpeed;
+    const leadSpeed = Math.max(0, egoSpeed + leadRelSpeed);
+
+    let stage = 'FOLLOW';
+    if (ttc < 1.8 || leadDist < 7.0) {
+      targetSpeed = 0.0;
+      stage = 'CRITICAL';
+    } else if (ttc < 3.0 || leadDist < 12.0) {
+      targetSpeed = Math.min(targetSpeed, Math.max(0, leadSpeed * 0.5));
+      stage = 'STRONG_BRAKE';
+    } else if (ttc < 5.0 || leadDist < sStar) {
+      targetSpeed = Math.min(targetSpeed, Math.max(0, leadSpeed + 0.35 * (effectiveGap - sStar)));
+      stage = 'DECELERATE';
+    } else if (interactionTerm > 0.04) {
+      targetSpeed = Math.min(cruiseSpeed, Math.max(0, leadSpeed + 0.5 * (effectiveGap - sStar)));
+      stage = 'FOLLOW';
+    }
+    if (isLeadBraking && leadDist < 60.0) {
+      targetSpeed = Math.min(targetSpeed, egoSpeed * 0.65);
+    }
+    return { targetSpeed: Math.max(0, targetSpeed), desiredGap: sStar, stage };
+  }
+}
+
 class LongitudinalPID {
   constructor(config = {}) {
-    this.kp = config.kp ?? 0.48;
-    this.ki = config.ki ?? 0.08;
-    this.kd = config.kd ?? 0.04;
+    this.kp = config.kp ?? 0.52;
+    this.ki = config.ki ?? 0.07;
+    this.kd = config.kd ?? 0.05;
     this.integralLimit = config.integralLimit ?? 4.0;
-    this.maxAccel = config.maxAccel ?? 3.5;
+    this.maxAccel = config.maxAccel ?? 3.4;
     this.maxDecel = config.maxDecel ?? 7.5;
-    this.deadband = config.deadband ?? 0.25;
+    this.deadband = config.deadband ?? 0.20;
     this.integral = 0.0;
     this.prevSpeed = 0.0;
     this.throttle = 0.0;
@@ -2374,22 +2492,28 @@ class LongitudinalPID {
     this.throttle = 0.0;
     this.brake = 0.0;
   }
-  update(currentSpeed, targetSpeed, dt) {
+  update(currentSpeed, targetSpeed, dt, forceBrake = 0) {
     if (dt <= 0) return { throttle: this.throttle, brake: this.brake };
     currentSpeed = Math.max(0, currentSpeed);
     targetSpeed = Math.max(0, targetSpeed);
-    const error = targetSpeed - currentSpeed;
 
+    if (forceBrake > 0) {
+      this.throttle = 0.0;
+      this.brake = Math.max(this.brake, forceBrake);
+      this.integral = 0.0;
+      return { throttle: this.throttle, brake: this.brake };
+    }
+
+    const error = targetSpeed - currentSpeed;
     if (Math.abs(error) > this.deadband) {
       this.integral += error * dt;
       this.integral = clamp(this.integral, -this.integralLimit, this.integralLimit);
     } else {
-      this.integral *= 0.95;
+      this.integral *= 0.94;
     }
 
     const dSpeed = (currentSpeed - this.prevSpeed) / dt;
     this.prevSpeed = currentSpeed;
-
     const rawAccel = this.kp * error + this.ki * this.integral - this.kd * dSpeed;
     const accelCmd = clamp(rawAccel, -this.maxDecel, this.maxAccel);
 
@@ -2397,82 +2521,21 @@ class LongitudinalPID {
     if (accelCmd > 0.12) {
       targetThrottle = clamp(accelCmd / this.maxAccel, 0.0, 1.0);
       targetBrake = 0.0;
-    } else if (accelCmd < -0.35) {
+    } else if (accelCmd < -0.32) {
       targetThrottle = 0.0;
       targetBrake = clamp(-accelCmd / this.maxDecel, 0.0, 1.0);
     } else {
-      targetThrottle = 0.04; // Idle coasting
+      targetThrottle = 0.04;
       targetBrake = 0.0;
     }
 
     const maxThrottleRate = 2.8 * dt;
-    const maxBrakeRate = 5.5 * dt;
+    const maxBrakeRate = 6.0 * dt;
     this.throttle += clamp(targetThrottle - this.throttle, -maxThrottleRate * 1.5, maxThrottleRate);
     this.brake += clamp(targetBrake - this.brake, -maxBrakeRate, maxBrakeRate);
     this.throttle = clamp(this.throttle, 0.0, 1.0);
     this.brake = clamp(this.brake, 0.0, 1.0);
     return { throttle: this.throttle, brake: this.brake };
-  }
-}
-
-class IDMController {
-  constructor(config = {}) {
-    this.s0 = config.s0 ?? 5.5;
-    this.timeHeadway = config.timeHeadway ?? 1.45;
-    this.maxAccel = config.maxAccel ?? 2.8;
-    this.comfDecel = config.comfDecel ?? 3.2;
-    this.delta = config.delta ?? 4.0;
-  }
-  evaluate(egoSpeed, cruiseSpeed, leadDist, leadRelSpeed, isLeadBraking) {
-    egoSpeed = Math.max(0.01, egoSpeed);
-    cruiseSpeed = Math.max(0.01, cruiseSpeed);
-    if (!Number.isFinite(leadDist) || leadDist > 180.0) {
-      return { targetSpeed: cruiseSpeed, desiredGap: this.s0 };
-    }
-    const deltaV = -leadRelSpeed;
-    const sStar = this.s0 + egoSpeed * this.timeHeadway + (egoSpeed * deltaV) / (2 * Math.sqrt(this.maxAccel * this.comfDecel));
-    const effectiveGap = Math.max(0.5, leadDist);
-    const interactionTerm = Math.pow(sStar / effectiveGap, 2);
-
-    let targetSpeed = cruiseSpeed;
-    if (interactionTerm > 0.05) {
-      const leadSpeed = Math.max(0, egoSpeed + leadRelSpeed);
-      targetSpeed = Math.min(cruiseSpeed, Math.max(0, leadSpeed + 0.45 * (effectiveGap - sStar)));
-    }
-    if (isLeadBraking && leadDist < 45.0) {
-      targetSpeed = Math.min(targetSpeed, egoSpeed * 0.65);
-    }
-    return { targetSpeed: Math.max(0, targetSpeed), desiredGap: sStar };
-  }
-}
-
-class CurvatureGovernor {
-  constructor(config = {}) {
-    this.mu = config.mu ?? 0.88;
-    this.latAccLimit = config.latAcc ?? 4.2;
-    this.comfDecel = config.comfDecel ?? 2.8;
-    this.lookaheadDist = config.lookahead ?? 85.0;
-  }
-  evaluate(track, egoS, currentSpeed, cruiseSpeed) {
-    if (!track || typeof track.kappaAt !== 'function') return { safeSpeed: cruiseSpeed, governorActive: false };
-    let minAllowedSpeed = cruiseSpeed;
-    let governorActive = false;
-    const scanEnd = Math.min(this.lookaheadDist, Math.max(25, currentSpeed * 3.2 + 20));
-    for (let d = 5; d <= scanEnd; d += 6) {
-      const sAhead = (egoS + d) % (track.L || 1000);
-      const k = Math.abs(track.kappaAt(sAhead));
-      if (k < 1e-4) continue;
-      const vCurve = Math.sqrt(Math.min(this.latAccLimit, this.mu * GRAV * 0.6) / k);
-      const vApproach = Math.sqrt(vCurve * vCurve + 2 * this.comfDecel * d);
-      if (vApproach < minAllowedSpeed) {
-        minAllowedSpeed = vApproach;
-        governorActive = true;
-      }
-    }
-    return {
-      safeSpeed: Math.max(4.0, Math.min(cruiseSpeed, minAllowedSpeed)),
-      governorActive: governorActive && minAllowedSpeed < cruiseSpeed - 1.5
-    };
   }
 }
 
@@ -2531,6 +2594,7 @@ class LaneChangeStateMachine {
         }
         break;
       case 'PREPARE':
+        this.latPosition = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
         if (this.isLaneSafe(this.targetLane, perceivedObjects, egoS, egoLat, egoSpeed, track)) {
           this.state = 'LANE_CHANGE';
           this.timer = 0;
@@ -2584,6 +2648,7 @@ class LaneChangeStateMachine {
 const longPID = new LongitudinalPID();
 const idmFollower = new IDMController();
 const curveGov = new CurvatureGovernor();
+const stopDistModel = new StoppingDistanceModel();
 const alcMachine = new LaneChangeStateMachine();
 const alc = { reqDir: 0 };
 function alcRequest(dir) { alc.reqDir = dir; }
@@ -2596,16 +2661,41 @@ function computePolicy(dt, proj) {
     alert: null, sev: 'amber', evasive: false,
     lkaActive: false, govActive: false, aebActive: false, v2vActive: false, alcActive: false, sigActive: false
   };
-  let vt = player.cruise, emergency = false, evasiveHard = false;
   const perceived = SENS.perceived;
   const egoS = proj.s, egoLat = proj.lat;
   const curLane = nearestLaneIdx(T, egoLat);
   const lanesF = T.def ? T.def.lanesF : 2;
+  const curLaneCenter = T.laneLat ? T.laneLat('fwd', curLane) : egoLat;
 
-  // 1. Lane Change State Machine
+  // 1. Target Lane & Auto-Pass Decision
   let targetLat = egoLat;
+  let autoLaneReq = alc.reqDir;
+
+  let leadInCurrentLane = null;
+  let leadInCurrentDist = Infinity;
+  for (const obj of perceived) {
+    if ((obj.vAlong ?? obj.v ?? 0) < -0.5) continue;
+    if (Math.abs(obj.lat - curLaneCenter) > 2.0) continue;
+    const d = T.wrapS ? T.wrapS(obj.s - egoS) : (obj.s - egoS);
+    if (d > 1.0 && d < leadInCurrentDist) {
+      leadInCurrentDist = d;
+      leadInCurrentLane = obj;
+    }
+  }
+
+  if (adas.alc && adas.autoPass && autoLaneReq === 0 && leadInCurrentLane && leadInCurrentDist < 65.0) {
+    const leadSpeed = leadInCurrentLane.vAlong ?? leadInCurrentLane.v ?? 0;
+    if (leadSpeed < player.cruise - 2.5) {
+      if (curLane > 0 && alcMachine.isLaneSafe(curLane - 1, perceived, egoS, egoLat, u, T)) {
+        autoLaneReq = -1;
+      } else if (curLane + 1 < lanesF && alcMachine.isLaneSafe(curLane + 1, perceived, egoS, egoLat, u, T)) {
+        autoLaneReq = 1;
+      }
+    }
+  }
+
   if (adas.alc) {
-    const lc = alcMachine.update(dt, alc.reqDir, egoLat, egoS, u, lanesF, perceived, T);
+    const lc = alcMachine.update(dt, autoLaneReq, egoLat, egoS, u, lanesF, perceived, T);
     alc.reqDir = 0;
     targetLat = lc.targetLateral;
     out.alcActive = lc.active;
@@ -2613,83 +2703,87 @@ function computePolicy(dt, proj) {
       out.alert = lc.state === 'ABORT' ? 'ALC · RETURNING (OCCUPIED)' : `ALC · LANE CHANGE (LANE ${lc.targetLane + 1})`;
     }
   } else {
-    targetLat = T.laneLat ? T.laneLat('fwd', curLane) : egoLat;
+    targetLat = curLaneCenter;
   }
 
-  // 2. Proactive Curvature Speed Governor
+  // 2. Unified Hierarchical Safe-Speed Governor
+  let safeSpeed = player.cruise;
+  let lookaheadK = proj.kappa || 0;
+
+  // A. Curvature Governor (smooth pre-curve deceleration)
   if (adas.gov) {
-    const gov = curveGov.evaluate(T, egoS, u, vt);
-    if (gov.safeSpeed < vt) {
-      vt = gov.safeSpeed;
+    const gov = curveGov.evaluate(T, egoS, u, player.cruise);
+    if (gov.safeSpeed < safeSpeed) {
+      safeSpeed = gov.safeSpeed;
       out.govActive = gov.governorActive;
-      if (out.govActive && !out.alert) out.alert = 'CURVE GOVERNOR — DECELERATING FOR TURN';
+      if (out.govActive && !out.alert) out.alert = 'CURVE GOVERNOR — SLOWING FOR TURN';
     }
+    lookaheadK = Math.max(Math.abs(proj.kappa || 0), gov.lookaheadK);
   }
 
-  // 3. Signal Stop (I2V / SPAT)
+  // B. Signal Stop (I2V / SPAT)
   if (SENS.signal && SENS.signal.state !== 'green') {
     const d = SENS.signal.dist;
     const vStop = Math.sqrt(Math.max(0, 2 * 2.6 * (d - 2.5)));
     const canStop = d > (u * u) / (2 * 3.4) + 1.5;
     if (SENS.signal.state === 'red' || canStop) {
-      if (vStop < vt) { vt = vStop; out.sigActive = true; }
-      if (d < 2.5 && u < 1.5) vt = 0;
+      if (vStop < safeSpeed) { safeSpeed = vStop; out.sigActive = true; }
+      if (d < 2.5 && u < 1.5) safeSpeed = 0;
       if (!out.alert) out.alert = `I2V · SIGNAL ${SENS.signal.state.toUpperCase()} — STOPPING`;
     }
   }
 
-  // 4. Intelligent Driver Model (IDM) Car Following
-  let lead = null, minLeadDist = 1e9;
+  // C. Lead Vehicle Following & Predictive Stopping Distance
+  let lead = null, minLeadDist = 1e9, minLeadTTC = 1e9, minLeadClosingV = 0;
   for (const p of perceived) {
     if ((p.vAlong ?? p.v ?? 0) < -0.5) continue;
     if (Math.abs(p.lat - targetLat) > 2.2) continue;
     const g = T.wrapS ? T.wrapS(p.s - egoS) : (p.s - egoS);
-    if (g > 1 && g < minLeadDist) { minLeadDist = g; lead = p; }
+    if (g > 0.5 && g < minLeadDist) {
+      minLeadDist = g;
+      lead = p;
+      const dyn2D = calculateClosingDynamics(dyn, p);
+      minLeadTTC = dyn2D.ttc;
+      minLeadClosingV = dyn2D.closingVelocity;
+    }
   }
 
+  let isLeadBraking = false;
+  let forceBrake = 0.0;
   if (lead) {
     const leadRelV = (lead.vAlong ?? lead.v ?? 0) - u;
-    const isBraking = lead.braking || (lead.src === 'v2v' && (lead.vAlong ?? lead.v ?? 0) < u - 3);
-    const idm = idmFollower.evaluate(u, vt, minLeadDist, leadRelV, isBraking);
-    vt = Math.min(vt, idm.targetSpeed);
+    isLeadBraking = lead.braking || (lead.src === 'v2v' && (lead.vAlong ?? lead.v ?? 0) < u - 3);
     out.v2vActive = lead.src === 'v2v';
     out.aebActive = lead.src === 'local';
 
-    const closing = -leadRelV;
-    const ttc = closing > 0.3 ? minLeadDist / closing : 1e9;
+    const idm = idmFollower.evaluate(u, safeSpeed, minLeadDist, leadRelV, isLeadBraking, minLeadTTC);
+    safeSpeed = Math.min(safeSpeed, idm.targetSpeed);
 
-    if (minLeadDist < 7.0 || ttc < 1.6) {
-      emergency = true;
-      out.alert = lead.src === 'v2v' ? 'FCW · IMMINENT — FULL AUTO BRAKE' : 'AEB · CRITICAL OBJECT — FULL BRAKE';
+    const stopSpeedCeil = stopDistModel.calculateSafeSpeed(minLeadDist, Math.max(0, u + leadRelV));
+    safeSpeed = Math.min(safeSpeed, stopSpeedCeil);
+
+    // Multi-stage progressive braking alerts
+    if (minLeadDist < 6.5 || minLeadTTC < 1.35) {
+      forceBrake = 1.0;
+      safeSpeed = 0.0;
+      out.alert = lead.src === 'v2v' ? 'FCW · IMMINENT — FULL AUTO BRAKE' : 'AEB · CRITICAL DISTANCE — FULL BRAKE';
       out.sev = 'red';
-    } else if (isBraking && lead.src === 'v2v' && ttc < 6.5) {
-      out.alert = lead.seen ? 'FCW · LEAD VEHICLE BRAKING' : 'FCW · OCCLUDED VEHICLE BRAKING (RADIO)';
+    } else if (minLeadTTC < 2.5 || minLeadDist < 12.0) {
+      forceBrake = clamp((2.5 - minLeadTTC) / 1.5, 0.45, 0.85);
+      out.alert = 'FCW · COLLISION PREDICTION — DECELERATING';
+      out.sev = 'red';
+    } else if (minLeadTTC < 4.5 || (isLeadBraking && minLeadDist < 45.0)) {
+      forceBrake = clamp((4.5 - minLeadTTC) / 2.5, 0.15, 0.45);
+      out.alert = isLeadBraking ? 'FCW · LEAD BRAKING AHEAD (RADIO)' : 'ACC · FOLLOWING — SPEED CONTROL';
       out.sev = 'amber';
     } else if (minLeadDist < idm.desiredGap * 1.4 && !out.alert) {
       out.alert = 'ACC · FOLLOWING — SPEED CONTROL';
     }
   }
 
-  // 5. 360° Proximity Ray Emergency Braking Check
+  // 3. Side Blind Spot Protection
   const prox = SENS.proximity;
   if (prox && adas.aeb) {
-    if (prox.fwd < 6.5 || (prox.fwd < 20 && prox.fwdTtc < 1.35)) {
-      emergency = true;
-      evasiveHard = true;
-      vt = 0;
-      out.aebActive = true;
-      out.alert = `AEB · CRITICAL PROXIMITY (${prox.fwd.toFixed(1)}M) — FULL BRAKE`;
-      out.sev = 'red';
-    } else if (prox.fwd < 15.0 || (prox.fwd < 32 && prox.fwdTtc < 2.5)) {
-      const vSafe = Math.max(0, u * (prox.fwd / 15.0));
-      vt = Math.min(vt, vSafe);
-      out.aebActive = true;
-      if (!out.alert) {
-        out.alert = `PROXIMITY WARNING (${prox.fwd.toFixed(1)}M) — DECELERATING`;
-        out.sev = 'amber';
-      }
-    }
-    // Blind spot side protection
     if (prox.left < 2.2 && out.steer > 0.05) {
       out.steer = Math.min(out.steer, 0.02);
       if (!out.alert) { out.alert = 'BLIND SPOT · LEFT PROXIMITY'; out.sev = 'amber'; }
@@ -2700,25 +2794,19 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // 6. Longitudinal PID Control (No Throttle/Brake Fighting)
-  if (emergency) {
-    out.throttle = 0.0;
-    out.brake = evasiveHard ? 0.65 : 1.0;
-    longPID.reset();
-  } else {
-    const pid = longPID.update(u, vt, dt);
-    out.throttle = pid.throttle;
-    out.brake = pid.brake;
-  }
-  out.vt = vt;
+  // 4. Longitudinal Controller (Anti-Windup PID)
+  const pid = longPID.update(u, safeSpeed, dt, forceBrake);
+  out.throttle = pid.throttle;
+  out.brake = pid.brake;
+  out.vt = safeSpeed;
 
-  // 7. High-Precision Stanley Lane Centering with Curvature Feedforward
+  // 5. Curvature-Lookahead Stanley Steering
   if (!out.evasive && (adas.lka || out.alcActive)) {
     const latErr = egoLat - targetLat;
     const headingErr = wrapAngle(dyn.psi - proj.psi);
     const kLat = 0.38 / Math.max(1.0, u * 0.05);
     const kHead = 0.68;
-    const kCurv = (proj.kappa || 0) * (3.4 + u * 0.16);
+    const kCurv = (lookaheadK || 0) * (3.4 + u * 0.16);
     const steerCmd = clamp(kLat * latErr - kHead * headingErr + kCurv, -1.0, 1.0);
     out.steer = steerCmd;
     out.lkaActive = !out.alcActive && Math.abs(latErr) > 0.015;
