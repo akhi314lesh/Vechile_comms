@@ -113,6 +113,25 @@
     color: rgba(150,178,204,0.5); }
   #mapTick { position: absolute; left: calc(50% - 7px); top: -4px; width: 14px; height: 11px;
     background: #ffb454; clip-path: polygon(50% 100%, 0 0, 100% 0); transform-origin: 7px 124px; }
+  #radarWrap { position: fixed; left: 20px; bottom: 20px; width: 230px; height: 230px; z-index: 12;
+    pointer-events: auto; background: rgba(5, 9, 18, 0.82); backdrop-filter: blur(8px);
+    border: 1px solid rgba(0, 229, 255, 0.40); border-radius: 10px;
+    box-shadow: inset 0 0 25px rgba(0, 180, 255, 0.08), 0 8px 32px rgba(0,0,0,0.65); }
+  #radarWrap::before { content: ''; position: absolute; top: -1px; left: -1px; width: 18px; height: 18px;
+    border-top: 2px solid rgba(0, 229, 255, 0.9); border-left: 2px solid rgba(0, 229, 255, 0.9);
+    border-top-left-radius: 10px; }
+  #radarWrap::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 18px; height: 18px;
+    border-bottom: 2px solid rgba(0, 229, 255, 0.9); border-right: 2px solid rgba(0, 229, 255, 0.9);
+    border-bottom-right-radius: 10px; }
+  #radarHeader { position: absolute; top: 6px; left: 8px; font-size: 8px; letter-spacing: 1.5px;
+    color: rgba(180, 230, 255, 0.9); font-weight: 700; pointer-events: none; }
+  #radarCap { position: absolute; bottom: 6px; left: 8px; font-size: 8px; letter-spacing: 1.2px;
+    color: rgba(140, 190, 230, 0.6); pointer-events: none; }
+  #radarCanvas { position: absolute; inset: 0; width: 230px; height: 230px; cursor: crosshair; }
+  #radarTooltip { display: none; position: absolute; bottom: 22px; left: 6px; right: 6px;
+    background: rgba(3, 7, 15, 0.95); border: 1px solid rgba(0, 229, 255, 0.45);
+    border-radius: 5px; padding: 6px 8px; font-size: 8px; line-height: 1.45;
+    color: #dff0ff; pointer-events: none; z-index: 25; box-shadow: 0 4px 16px rgba(0,0,0,0.8); }
   #editor { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
     background: rgba(3,5,10,.62); }
   .edCard { background: rgba(7,11,20,.95); border: 1px solid rgba(130,190,235,.3); border-radius: 10px;
@@ -199,7 +218,8 @@
     <div class="arow"><span>AUTO BRAKE · SENSED</span><button class="tgl on" id="aebTgl">ON</button></div>
     <div class="arow"><span>CURVE GOVERNOR</span><button class="tgl on" id="govTgl">ON</button></div>
     <div class="arow"><span>AUTO LANE CHANGE</span><button class="tgl on" id="alcTgl">ON</button></div>
-    <div class="arow"><span>RADAR MINIMAP</span><button class="tgl on" id="minimapTgl">ON</button></div>
+    <div class="arow"><span>3D TOP-DOWN MAP</span><button class="tgl on" id="minimap3dTgl">ON</button></div>
+    <div class="arow"><span>V2V TACTICAL RADAR</span><button class="tgl on" id="radarTgl">ON</button></div>
     <div class="hint">ACTIVE IN V2V MODE · A/D = REQUEST LANE CHANGE · V2V RADIO AVOIDANCE (LOS + OCCLUDED) RUNS REGARDLESS</div>
   </div>
   <div class="sec" id="sensorSec">
@@ -217,7 +237,14 @@
       v2vScene.policy = fn(frame, api) ⇒ {steer, throttle, brake} TO REPLACE IT</div>
   </div>
   <div class="sec">
-    <label>TRACK</label>
+    <label>ENVIRONMENT &amp; TRACK</label>
+    <div class="crow"><span>TIME OF DAY</span>
+      <div class="seg" id="timeSeg" style="flex:1;margin-left:8px">
+        <button class="btn on" id="todNight">NIGHT</button>
+        <button class="btn" id="todDawn">DAWN</button>
+        <button class="btn" id="todDay">DAY</button>
+      </div>
+    </div>
     <div class="crow"><span>FORWARD LANES</span>
       <span class="stp"><button id="lfMinus">–</button><span class="val" id="lfVal">2</span><button id="lfPlus">+</button></span></div>
     <div class="crow"><span>ONCOMING LANES</span>
@@ -228,7 +255,7 @@
         <option value="outside">OUTSIDE CURVE</option>
         <option value="off">OFF</option>
       </select></div>
-    <div class="crow"><span>FOG</span><span style="flex:1;margin-left:8px"><input type="range" id="fogRange" min="0.004" max="0.09" step="0.001" value="0.02"></span></div>
+    <div class="crow"><span>FOG</span><span style="flex:1;margin-left:8px"><input type="range" id="fogRange" min="0.002" max="0.08" step="0.001" value="0.02"></span></div>
     <div class="brow"><button class="btn" id="btnEdit">EDIT TRACK · E</button><button class="btn" id="btnDefault">DEFAULT</button></div>
   </div>
   <div class="sec">
@@ -248,11 +275,16 @@
 </div>
 
 <div id="mapWrap">
-  <canvas id="mapCanvas" width="240" height="240" style="position:absolute;inset:0;pointer-events:auto;cursor:crosshair;"></canvas>
   <div id="mapN">N</div>
-  <div id="mapCap">RADAR · 80 M</div>
+  <div id="mapCap">3D MAP · 100 M</div>
   <div id="mapTick"></div>
-  <div id="mapTooltip" style="display:none;position:absolute;bottom:24px;left:8px;right:8px;background:rgba(5,9,18,0.92);border:1px solid rgba(130,190,235,0.4);border-radius:4px;padding:5px 7px;font-size:8px;line-height:1.4;color:#dff0ff;pointer-events:none;z-index:20;"></div>
+</div>
+
+<div id="radarWrap">
+  <canvas id="radarCanvas" width="230" height="230"></canvas>
+  <div id="radarHeader">V2V TACTICAL RADAR</div>
+  <div id="radarCap">80 M · EGO-CENTERED</div>
+  <div id="radarTooltip"></div>
 </div>
 
 <div id="editor">
@@ -1683,9 +1715,11 @@ function buildTrack(scene, def, assets, skyGroup, oldT, createAIFn) {
         geos.push(g);
       }
       if (!geos.length) return;
+      const currentTOD = typeof currentTimeOfDay !== 'undefined' ? currentTimeOfDay : 'night';
+      const bEmiss = (typeof TIME_OF_DAY_PRESETS !== 'undefined' && TIME_OF_DAY_PRESETS[currentTOD]) ? TIME_OF_DAY_PRESETS[currentTOD].buildingEmissive : 1.0;
       const mat = new THREE.MeshStandardMaterial({
-        color: 0x04060c, emissive: 0xffffff, emissiveMap: tex,
-        emissiveIntensity: ti === 0 ? 1.15 : 0.55, roughness: 1, fog: ti === 0
+        color: 0x222834, emissive: 0xffffff, emissiveMap: tex,
+        emissiveIntensity: (ti === 0 ? 1.0 : 0.45) * bEmiss, roughness: 0.9, metalness: 0.1, fog: true
       });
       disposeMats.push(mat);
       group.add(new THREE.Mesh(mergeGeometries(geos), mat));
@@ -2315,48 +2349,93 @@ function updateSensors(et) {
       id: b.id,
       wx: b.x,
       wz: b.z,
+      bsmX: b.x,
+      bsmZ: b.z,
       heading: b.heading,
       v2vAge
     });
   }
+
   /* ray hits: confirm BSM tracks (line-of-sight) or track unknowns */
   const pts = [];
   for (const h of hits) {
-    if (pts.some(q => Math.hypot(q.x - h.x, q.z - h.z) < 1.4)) continue;
+    if (pts.some(q => Math.hypot(q.x - h.x, q.z - h.z) < 1.8)) continue;
     pts.push(h);
   }
+
   for (const h of pts) {
     let matched = false;
     for (const p of SENS.perceived) {
-      if ((p.src === 'v2v' || p.src === 'fused') && Math.hypot(h.x - p.wx, h.z - p.wz) < 3.2) {
+      // Check distance against canonical BSM position with 4.5m footprint
+      const centerDist = Math.hypot(h.x - (p.bsmX ?? p.wx), h.z - (p.bsmZ ?? p.wz));
+      if (centerDist < 4.5) {
         p.seen = true;
         p.src = 'fused';
-        p.wx = h.x;
-        p.wz = h.z;
         matched = true;
         break;
       }
     }
-    if (matched) continue;
+    if (matched) continue; // Ray belongs to an already known V2V/Fused vehicle, skip!
+
+    // Filter out non-vehicle hits (barrels, rails, obstacles, terrain)
+    if (h.tag !== 'vehicle' && h.tag !== 'car') continue;
+
+    // Filter out hits on Ego body
+    if (Math.hypot(h.x - dyn.x, h.z - dyn.z) < 2.5) continue;
+
+    // Double-check against perceived list
+    if (SENS.perceived.some(p => Math.hypot(h.x - p.wx, h.z - p.wz) < 4.5)) continue;
+
     const p2 = T.project(h.x, h.z, proj.idx);
     let tr = null;
     for (const t of SENS.localTracks) {
-      if (Math.hypot(h.x - t.x, h.z - t.z) < 3.2) { tr = t; break; }
+      if (Math.hypot(h.x - t.x, h.z - t.z) < 3.8) { tr = t; break; }
     }
     if (tr) {
       tr.vx = tr.vx * 0.55 + ((h.x - tr.x) / dtS) * 0.45;
       tr.vz = tr.vz * 0.55 + ((h.z - tr.z) / dtS) * 0.45;
       tr.vAlong = tr.vAlong * 0.55 + ((p2.s - tr.s) / dtS) * 0.45;
-      tr.x = h.x; tr.z = h.z; tr.s = p2.s; tr.lat = p2.lat;
+      tr.x = tr.x * 0.6 + h.x * 0.4;
+      tr.z = tr.z * 0.6 + h.z * 0.4;
+      tr.s = p2.s; tr.lat = p2.lat;
       tr.misses = 0; tr.tag = h.tag;
     } else {
       SENS.localTracks.push({ x: h.x, z: h.z, vx: 0, vz: 0, s: p2.s, lat: p2.lat, vAlong: 0, misses: 0, tag: h.tag });
     }
   }
+
   for (const t of SENS.localTracks) t.misses++;
-  for (let i = SENS.localTracks.length - 1; i >= 0; i--)
-    if (SENS.localTracks[i].misses > 30) SENS.localTracks.splice(i, 1);
+  for (let i = SENS.localTracks.length - 1; i >= 0; i--) {
+    if (SENS.localTracks[i].misses > 15) SENS.localTracks.splice(i, 1);
+  }
+
+  // Deduplicate overlapping local tracks (merge tracks within 4.0m)
+  for (let i = 0; i < SENS.localTracks.length; i++) {
+    const t1 = SENS.localTracks[i];
+    // Remove if it overlaps any perceived V2V/Fused car
+    if (SENS.perceived.some(p => Math.hypot(t1.x - p.wx, t1.z - p.wz) < 4.5)) {
+      SENS.localTracks.splice(i, 1);
+      i--;
+      continue;
+    }
+    for (let j = i + 1; j < SENS.localTracks.length; j++) {
+      const t2 = SENS.localTracks[j];
+      if (Math.hypot(t1.x - t2.x, t1.z - t2.z) < 4.0) {
+        t1.x = (t1.x + t2.x) * 0.5;
+        t1.z = (t1.z + t2.z) * 0.5;
+        t1.vx = (t1.vx + t2.vx) * 0.5;
+        t1.vz = (t1.vz + t2.vz) * 0.5;
+        t1.vAlong = (t1.vAlong + t2.vAlong) * 0.5;
+        t1.misses = Math.min(t1.misses, t2.misses);
+        SENS.localTracks.splice(j, 1);
+        j--;
+      }
+    }
+  }
+
+  // Add clean unique local tracks to perceived
   for (const t of SENS.localTracks) {
+    if (t.misses > 6) continue;
     const heading = (Math.hypot(t.vx, t.vz) > 0.2) ? Math.atan2(-t.vx, -t.vz) : (dyn.psi ?? 0);
     SENS.perceived.push({
       src: 'local',
@@ -2364,8 +2443,8 @@ function updateSensors(et) {
       lat: t.lat,
       v: t.vAlong,
       braking: false,
-      seen: t.misses === 0,
-      tag: t.tag,
+      seen: true,
+      tag: 'vehicle',
       id: -1,
       wx: t.x,
       wz: t.z,
@@ -2549,6 +2628,15 @@ function evaluateThreats(ego, perceived, track, et) {
         collisionRisk *= decay;
       }
     }
+
+    p.distance = dyn2D.dist;
+    p.relativeSpeed = (p.v ?? p.vAlong ?? 0) - egoSpeed;
+    p.closingSpeed = dyn2D.closingVelocity;
+    p.lane = pLane;
+    p.ttc = dyn2D.ttc;
+    p.isClosing = dyn2D.isClosing;
+    p.collisionRisk = clamp(collisionRisk, 0, 1);
+    p.v2vAge = v2vAge;
 
     threats.push({
       id: p.id,
@@ -4268,6 +4356,10 @@ function initUI(env) {
   $('vrMinus').onclick = () => { SENS.v2vRange = Math.max(100, SENS.v2vRange - 50); syncVr(); };
   $('vrPlus').onclick = () => { SENS.v2vRange = Math.min(600, SENS.v2vRange + 50); syncVr(); };
 
+  if ($('todNight')) $('todNight').onclick = () => env.api.setTimeOfDay('night');
+  if ($('todDawn')) $('todDawn').onclick = () => env.api.setTimeOfDay('dawn');
+  if ($('todDay')) $('todDay').onclick = () => env.api.setTimeOfDay('day');
+
   function syncTrackUI() {
     $('lfVal').textContent = env.trackDef.lanesF;
     $('loVal').textContent = env.trackDef.lanesO;
@@ -4279,7 +4371,12 @@ function initUI(env) {
   $('loMinus').onclick = () => { env.trackDef.lanesO = Math.max(0, env.trackDef.lanesO - 1); syncTrackUI(); env.api.rebuild(); };
   $('loPlus').onclick = () => { env.trackDef.lanesO = Math.min(3, env.trackDef.lanesO + 1); syncTrackUI(); env.api.rebuild(); };
   $('barrierSel').onchange = () => { env.trackDef.barrier = $('barrierSel').value; env.api.rebuild(); };
-  $('fogRange').oninput = () => env.api.setFog(+$('fogRange').value);
+  $('fogRange').oninput = () => {
+    const val = +$('fogRange').value;
+    if (env.api.setFog) env.api.setFog(val);
+    else if (env.api.setFogDensity) env.api.setFogDensity(val);
+    else if (env.fog) env.fog.density = val;
+  };
   $('btnEdit').onclick = () => env.api.toggleEditor();
   $('btnDefault').onclick = () => env.api.restoreDefault();
   $('conToggle').onclick = () => {
@@ -4370,8 +4467,10 @@ const assets = createAssets(renderer);
 
 const skyGroup = new THREE.Group();
 scene.add(skyGroup);
+
+let skyMat, starPoints, moonSprite;
 {
-  const skyMat = new THREE.ShaderMaterial({
+  skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
       top: { value: new THREE.Color(0x060913) },
@@ -4412,16 +4511,21 @@ scene.add(skyGroup);
   const sg = new THREE.BufferGeometry();
   sg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   sg.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  skyGroup.add(new THREE.Points(sg, new THREE.PointsMaterial({
+  starPoints = new THREE.Points(sg, new THREE.PointsMaterial({
     map: assets.tex.star, vertexColors: true, size: 2.4, sizeAttenuation: false,
-    transparent: true, opacity: 0.85, depthWrite: false, fog: false, color: 0xdfe8ff })));
-  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: assets.tex.moon, fog: false, transparent: true, depthWrite: false }));
-  moon.scale.set(70, 70, 1);
-  moon.position.set(150, 285, -516);
-  skyGroup.add(moon);
+    transparent: true, opacity: 0.85, depthWrite: false, fog: false, color: 0xdfe8ff }));
+  skyGroup.add(starPoints);
+  moonSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: assets.tex.moon, fog: false, transparent: true, depthWrite: false }));
+  moonSprite.scale.set(70, 70, 1);
+  moonSprite.position.set(150, 285, -516);
+  skyGroup.add(moonSprite);
 }
-scene.add(new THREE.AmbientLight(0x1a2238, 0.6));
-scene.add(new THREE.HemisphereLight(0x131c32, 0x04060a, 0.3));
+
+const ambientLight = new THREE.AmbientLight(0x1a2238, 0.6);
+scene.add(ambientLight);
+const hemiLight = new THREE.HemisphereLight(0x131c32, 0x04060a, 0.3);
+scene.add(hemiLight);
+
 const moonDir = new THREE.Vector3(150, 285, -516).normalize();
 const moonLight = new THREE.DirectionalLight(0x7f9cf5, 0.8);
 moonLight.castShadow = true;
@@ -4431,6 +4535,142 @@ moonLight.shadow.camera.updateProjectionMatrix();
 moonLight.shadow.bias = -0.0004;
 moonLight.shadow.normalBias = 0.6;
 scene.add(moonLight, moonLight.target);
+
+let currentTimeOfDay = 'night';
+const TIME_OF_DAY_PRESETS = {
+  night: {
+    top: 0x03060f,
+    horizon: 0x0c1322,
+    dusk: 0x22142d,
+    duskDir: [-0.55, -0.75],
+    fogColor: 0x0c1322,
+    clearColor: 0x03060f,
+    fogDensity: 0.015,
+    ambientColor: 0x141d2e,
+    ambientIntensity: 0.55,
+    hemiSky: 0x162134,
+    hemiGround: 0x05070c,
+    hemiIntensity: 0.35,
+    mainColor: 0x7f9cf5,
+    mainIntensity: 0.85,
+    mainDir: [150, 285, -516],
+    starsOpacity: 0.85,
+    moonOpacity: 1.0,
+    buildingEmissive: 1.0,
+    streetLampIntensity: 1.0,
+    headlights: true
+  },
+  dawn: {
+    top: 0x16233b,
+    horizon: 0xd96b27,
+    dusk: 0xf57c00,
+    duskDir: [-0.85, -0.45],
+    fogColor: 0xd96b27,
+    clearColor: 0x16233b,
+    fogDensity: 0.0055,
+    ambientColor: 0x5a3e35,
+    ambientIntensity: 0.85,
+    hemiSky: 0x6e4840,
+    hemiGround: 0x1e1514,
+    hemiIntensity: 0.6,
+    mainColor: 0xffa858,
+    mainIntensity: 1.8,
+    mainDir: [260, 80, -420],
+    starsOpacity: 0.10,
+    moonOpacity: 0.20,
+    buildingEmissive: 0.45,
+    streetLampIntensity: 0.4,
+    headlights: true
+  },
+  day: {
+    top: 0x2474bc,
+    horizon: 0xa0d0ea,
+    dusk: 0xeaf6ff,
+    duskDir: [-0.20, -0.90],
+    fogColor: 0xa0d0ea,
+    clearColor: 0xa0d0ea,
+    fogDensity: 0.0035,
+    ambientColor: 0x8898a8,
+    ambientIntensity: 1.2,
+    hemiSky: 0xc8e4f8,
+    hemiGround: 0x3a4832,
+    hemiIntensity: 0.85,
+    mainColor: 0xfffaf0,
+    mainIntensity: 2.5,
+    mainDir: [120, 380, -200],
+    starsOpacity: 0.0,
+    moonOpacity: 0.0,
+    buildingEmissive: 0.08,
+    streetLampIntensity: 0.0,
+    headlights: false
+  }
+};
+
+function setTimeOfDay(tod) {
+  const p = TIME_OF_DAY_PRESETS[tod] || TIME_OF_DAY_PRESETS.night;
+  currentTimeOfDay = tod;
+
+  if (skyMat && skyMat.uniforms) {
+    skyMat.uniforms.top.value.setHex(p.top);
+    skyMat.uniforms.horizon.value.setHex(p.horizon);
+    skyMat.uniforms.dusk.value.setHex(p.dusk);
+    skyMat.uniforms.duskDir.value.set(p.duskDir[0], p.duskDir[1]).normalize();
+  }
+  if (starPoints && starPoints.material) {
+    starPoints.material.opacity = p.starsOpacity;
+    starPoints.visible = p.starsOpacity > 0.01;
+  }
+  if (moonSprite && moonSprite.material) {
+    moonSprite.material.opacity = p.moonOpacity;
+    moonSprite.visible = p.moonOpacity > 0.01;
+  }
+  if (fog) {
+    fog.color.setHex(p.fogColor);
+    fog.density = p.fogDensity;
+  }
+  const fogInput = document.getElementById('fogRange');
+  if (fogInput && fog) {
+    fogInput.value = fog.density;
+  }
+  if (renderer) renderer.setClearColor(p.clearColor, 1);
+  if (ambientLight) {
+    ambientLight.color.setHex(p.ambientColor);
+    ambientLight.intensity = p.ambientIntensity;
+  }
+  if (hemiLight) {
+    hemiLight.color.setHex(p.hemiSky);
+    hemiLight.groundColor.setHex(p.hemiGround);
+    hemiLight.intensity = p.hemiIntensity;
+  }
+  if (moonLight) {
+    moonLight.color.setHex(p.mainColor);
+    moonLight.intensity = p.mainIntensity;
+    moonDir.set(p.mainDir[0], p.mainDir[1], p.mainDir[2]).normalize();
+  }
+
+  // Update building materials emissive intensity
+  if (T && T.disposeMats) {
+    T.disposeMats.forEach(m => {
+      if (m.emissiveMap && m.roughness === 0.9) {
+        m.emissiveIntensity = p.buildingEmissive;
+      }
+    });
+  }
+
+  // Update street lamp bulbs
+  if (assets && assets.mat && assets.mat.bulb) {
+    assets.mat.bulb.emissiveIntensity = p.streetLampIntensity * 3.2;
+  }
+
+  // Update button active state
+  ['todNight', 'todDawn', 'todDay'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('on', id.toLowerCase().includes(tod));
+  });
+
+  if (p.headlights !== undefined) setHeadlights(p.headlights);
+  toast(`ENVIRONMENT: ${tod.toUpperCase()} LIGHTING`);
+}
 
 const fpsCam = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 1000);
 const minimapCam = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 500);
@@ -4701,7 +4941,8 @@ addEventListener('keydown', e => {
       toast('HAZARD EVENT — FORWARD VEHICLES BRAKING');
       break;
     case 'KeyH': setHeadlights(!headlightsOn); break;
-    case 'KeyM': toggleMinimap(); break;
+    case 'KeyM': toggle3DMinimap(); break;
+    case 'KeyT': toggleTacticalRadar(); break;
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
@@ -4785,12 +5026,14 @@ const { toast, renderVehicles, syncTrackUI, updateModeUI } = initUI({
   getMode: () => mode, aids, adas, trackDef, scenario, player, fog,
   getTrack: () => T,
   getDyn: () => dyn,
-  api: {
-    setMode, rebuild, resetRun, restoreDefault,
-    addAI, removeAI, placeAI,
-    save: saveScenario, load: loadScenario,
-    setFogDensity, setHeadlights
-  }
+    api: {
+      setMode, rebuild, resetRun, restoreDefault,
+      addAI, removeAI, placeAI,
+      save: saveScenario, load: loadScenario,
+      setFogDensity, setFog: setFogDensity, setHeadlights,
+      setTimeOfDay,
+      toggleEditor: () => { editor.isOpen() ? editor.close() : editor.open(); }
+    }
 });
 makePolicyApi();
 
@@ -5282,186 +5525,271 @@ function updateAlertDOM() {
   }
 }
 
-/* ---------- Interactive Minimap Radar (Phase 18) ---------- */
-let minimapOn = true;
-const mapCanvas = document.getElementById('mapCanvas');
-const mapCtx = mapCanvas ? mapCanvas.getContext('2d') : null;
-const mapTooltip = document.getElementById('mapTooltip');
-const MINIMAP_RADIUS = 80;
+/* ---------- Separate 3D Map & V2V Tactical Radar (Phase 18 Modular) ---------- */
+let minimap3dOn = true;
+let tacticalRadarOn = true;
 
-let hoveredVehicle = null;
+const radarCanvas = document.getElementById('radarCanvas');
+const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
+const radarTooltip = document.getElementById('radarTooltip');
+const RADAR_RADIUS = 80;
+const RADAR_SIZE = 230;
+const RADAR_CENTER = 115;
+const RADAR_SCALE = RADAR_CENTER / RADAR_RADIUS; // 115 / 80 = 1.4375 px/m
 
-if (mapCanvas) {
-  mapCanvas.addEventListener('mousemove', (e) => {
-    const rect = mapCanvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (mapCanvas.width / rect.width);
-    const my = (e.clientY - rect.top) * (mapCanvas.height / rect.height);
+let hoveredRadarVehicle = null;
 
-    hoveredVehicle = null;
+if (radarCanvas) {
+  radarCanvas.addEventListener('mousemove', (e) => {
+    const rect = radarCanvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (radarCanvas.width / rect.width);
+    const my = (e.clientY - rect.top) * (radarCanvas.height / rect.height);
+
+    hoveredRadarVehicle = null;
     const ego = dyn;
     const egoPsi = ego.psi ?? 0;
     const cosPsi = Math.cos(egoPsi);
     const sinPsi = Math.sin(egoPsi);
-    const scale = 120 / MINIMAP_RADIUS;
 
     for (const p of (SENS.perceived || [])) {
+      // Filter out non-vehicles (barrels, rails, obstacles)
+      const isVeh = (p.tag === 'vehicle' || p.tag === 'car' || p.src === 'v2v' || p.src === 'fused' || (p.tag && p.tag.includes('veh')));
+      if (!isVeh) continue;
+
       const dx = (p.wx ?? p.x ?? 0) - ego.x;
       const dz = (p.wz ?? p.z ?? 0) - ego.z;
       const relX = dx * cosPsi - dz * sinPsi;
       const relZ = -(dx * sinPsi + dz * cosPsi);
-      const px = 120 + relX * scale;
-      const py = 120 - relZ * scale;
+
+      const dist = Math.hypot(relX, relZ);
+      if (dist > RADAR_RADIUS) continue;
+
+      const px = RADAR_CENTER + relX * RADAR_SCALE;
+      const py = RADAR_CENTER - relZ * RADAR_SCALE;
 
       if (Math.hypot(mx - px, my - py) < 14) {
-        hoveredVehicle = p;
+        hoveredRadarVehicle = p;
         break;
       }
     }
 
-    if (hoveredVehicle && mapTooltip) {
-      const dist = Math.hypot((hoveredVehicle.wx ?? 0) - ego.x, (hoveredVehicle.wz ?? 0) - ego.z);
-      const relSpd = (hoveredVehicle.v ?? 0) - Math.abs(ego.u ?? 0);
-      const dyn2D = calculateClosingDynamics(ego, hoveredVehicle);
-      const ttcVal = Number.isFinite(dyn2D.ttc) ? `${dyn2D.ttc.toFixed(2)}s` : '∞';
-      const ageVal = (hoveredVehicle.v2vAge ?? 0).toFixed(2);
+    if (hoveredRadarVehicle && radarTooltip) {
+      const idText = (hoveredRadarVehicle.id !== -1 && hoveredRadarVehicle.id !== undefined && hoveredRadarVehicle.id !== null) ? `${hoveredRadarVehicle.id}` : 'LOCAL';
+      const srcText = (hoveredRadarVehicle.src || 'LOCAL').toUpperCase();
+      const distVal = hoveredRadarVehicle.distance !== undefined ? hoveredRadarVehicle.distance : Math.hypot((hoveredRadarVehicle.wx ?? 0) - ego.x, (hoveredRadarVehicle.wz ?? 0) - ego.z);
+      const relSpdVal = hoveredRadarVehicle.relativeSpeed !== undefined ? hoveredRadarVehicle.relativeSpeed : ((hoveredRadarVehicle.v ?? 0) - Math.abs(ego.u ?? 0));
+      const laneVal = hoveredRadarVehicle.lane !== undefined ? (hoveredRadarVehicle.lane + 1) : (T ? nearestLaneIdx(T, hoveredRadarVehicle.lat) + 1 : '—');
+      const ttcVal = Number.isFinite(hoveredRadarVehicle.ttc) ? `${hoveredRadarVehicle.ttc.toFixed(2)}s` : '∞';
+      const ageVal = (hoveredRadarVehicle.v2vAge ?? 0).toFixed(2);
+      const ttcColor = (hoveredRadarVehicle.ttc && hoveredRadarVehicle.ttc < 3.2) ? '#ff5340' : '#dff0ff';
 
-      mapTooltip.style.display = 'block';
-      mapTooltip.innerHTML = `
-        <div style="font-weight:700;color:#ffb454;margin-bottom:2px;">ID ${hoveredVehicle.id !== -1 ? hoveredVehicle.id : 'RAY_TRACK'} · <span style="color:#45e6ff;">${(hoveredVehicle.src || 'LOCAL').toUpperCase()}</span></div>
-        <div>DIST: <b>${dist.toFixed(1)}m</b> · REL SPD: <b>${relSpd.toFixed(1)}m/s</b></div>
-        <div>TTC: <b style="color:${dyn2D.ttc < 3 ? '#ff5340' : '#dff0ff'};">${ttcVal}</b> · V2V AGE: <b>${ageVal}s</b></div>
+      radarTooltip.style.display = 'block';
+      radarTooltip.innerHTML = `
+        <div style="font-weight:700;color:#ffb454;margin-bottom:3px;border-bottom:1px solid rgba(0,229,255,0.3);padding-bottom:2px;">
+          ID: ${idText} · SOURCE: <span style="color:#00e5ff;">${srcText}</span>
+        </div>
+        <div>DIST: <b>${distVal.toFixed(1)}m</b> · REL SPD: <b>${relSpdVal.toFixed(1)}m/s</b></div>
+        <div>LANE: <b>${laneVal}</b> · TTC: <b style="color:${ttcColor};">${ttcVal}</b></div>
+        <div>V2V AGE: <b>${ageVal}s</b></div>
       `;
-    } else if (mapTooltip) {
-      mapTooltip.style.display = 'none';
+    } else if (radarTooltip) {
+      radarTooltip.style.display = 'none';
     }
   });
 
-  mapCanvas.addEventListener('mouseleave', () => {
-    hoveredVehicle = null;
-    if (mapTooltip) mapTooltip.style.display = 'none';
+  radarCanvas.addEventListener('mouseleave', () => {
+    hoveredRadarVehicle = null;
+    if (radarTooltip) radarTooltip.style.display = 'none';
   });
 }
 
-function toggleMinimap(force) {
-  minimapOn = typeof force === 'boolean' ? force : !minimapOn;
+function toggle3DMinimap(force) {
+  minimap3dOn = typeof force === 'boolean' ? force : !minimap3dOn;
   const wrap = document.getElementById('mapWrap');
-  if (wrap) wrap.style.display = minimapOn ? 'block' : 'none';
-  const btn = document.getElementById('minimapTgl');
+  if (wrap) wrap.style.display = minimap3dOn ? 'block' : 'none';
+  const btn = document.getElementById('minimap3dTgl');
   if (btn) {
-    btn.textContent = minimapOn ? 'ON' : 'OFF';
-    btn.classList.toggle('on', minimapOn);
+    btn.textContent = minimap3dOn ? 'ON' : 'OFF';
+    btn.classList.toggle('on', minimap3dOn);
   }
 }
 
-if (document.getElementById('minimapTgl')) {
-  document.getElementById('minimapTgl').onclick = () => toggleMinimap();
+function toggleTacticalRadar(force) {
+  tacticalRadarOn = typeof force === 'boolean' ? force : !tacticalRadarOn;
+  const wrap = document.getElementById('radarWrap');
+  if (wrap) wrap.style.display = tacticalRadarOn ? 'block' : 'none';
+  const btn = document.getElementById('radarTgl');
+  if (btn) {
+    btn.textContent = tacticalRadarOn ? 'ON' : 'OFF';
+    btn.classList.toggle('on', tacticalRadarOn);
+  }
 }
 
-function drawMinimap(et) {
-  if (!mapCtx || !minimapOn) return;
-  const ctx = mapCtx;
-  ctx.clearRect(0, 0, 240, 240);
+if (document.getElementById('minimap3dTgl')) {
+  document.getElementById('minimap3dTgl').onclick = () => toggle3DMinimap();
+}
+if (document.getElementById('radarTgl')) {
+  document.getElementById('radarTgl').onclick = () => toggleTacticalRadar();
+}
+
+function drawTacticalRadar(et) {
+  if (!radarCtx || !tacticalRadarOn) return;
+  const ctx = radarCtx;
+  ctx.clearRect(0, 0, RADAR_SIZE, RADAR_SIZE);
 
   const ego = dyn;
   const egoPsi = ego.psi ?? 0;
   const cosPsi = Math.cos(egoPsi);
   const sinPsi = Math.sin(egoPsi);
-  const scale = 120 / MINIMAP_RADIUS;
 
-  // Radar range rings (20m, 40m, 60m, 80m)
-  ctx.strokeStyle = 'rgba(130, 190, 235, 0.22)';
+  // 1. Radar range rings (20m, 40m, 60m, 80m)
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.18)';
   ctx.lineWidth = 1;
   [20, 40, 60, 80].forEach(r => {
     ctx.beginPath();
-    ctx.arc(120, 120, r * scale, 0, Math.PI * 2);
+    ctx.arc(RADAR_CENTER, RADAR_CENTER, r * RADAR_SCALE, 0, Math.PI * 2);
     ctx.stroke();
+
+    // Range distance label along vertical axis
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.42)';
+    ctx.font = '7px monospace';
+    ctx.fillText(`${r}M`, RADAR_CENTER + 2, RADAR_CENTER - r * RADAR_SCALE + 8);
   });
 
   // Crosshairs
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.22)';
   ctx.beginPath();
-  ctx.moveTo(120, 0); ctx.lineTo(120, 240);
-  ctx.moveTo(0, 120); ctx.lineTo(240, 120);
+  ctx.moveTo(RADAR_CENTER, 0); ctx.lineTo(RADAR_CENTER, RADAR_SIZE);
+  ctx.moveTo(0, RADAR_CENTER); ctx.lineTo(RADAR_SIZE, RADAR_CENTER);
   ctx.stroke();
 
-  // Ego Vehicle (Centered, pointing UP)
-  ctx.save();
-  ctx.translate(120, 120);
-  ctx.fillStyle = '#ffb454';
-  ctx.beginPath();
-  ctx.moveTo(0, -7);
-  ctx.lineTo(5, 6);
-  ctx.lineTo(-5, 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  // Render Perceived Vehicles
+  // 2. Render Highest Risk Threat Direction Vector (if active)
   const perceived = SENS.perceived || [];
   const highestThreat = telemetryState.highestRiskThreat;
 
+  if (highestThreat) {
+    const dxH = (highestThreat.wx ?? highestThreat.x ?? 0) - ego.x;
+    const dzH = (highestThreat.wz ?? highestThreat.z ?? 0) - ego.z;
+    const relXH = dxH * cosPsi - dzH * sinPsi;
+    const relZH = -(dxH * sinPsi + dzH * cosPsi);
+    const distH = Math.hypot(relXH, relZH);
+
+    if (distH <= RADAR_RADIUS) {
+      const pxH = RADAR_CENTER + relXH * RADAR_SCALE;
+      const pyH = RADAR_CENTER - relZH * RADAR_SCALE;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 75, 60, 0.50)';
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(RADAR_CENTER, RADAR_CENTER);
+      ctx.lineTo(pxH, pyH);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 3. Render Perceived Vehicles
   for (const p of perceived) {
+    // Filter out non-vehicles (barrels, barriers, rails, scenery)
+    const isVeh = (p.tag === 'vehicle' || p.tag === 'car' || p.src === 'v2v' || p.src === 'fused' || (p.tag && p.tag.includes('veh')));
+    if (!isVeh) continue;
+
     const dx = (p.wx ?? p.x ?? 0) - ego.x;
     const dz = (p.wz ?? p.z ?? 0) - ego.z;
     const relX = dx * cosPsi - dz * sinPsi;
     const relZ = -(dx * sinPsi + dz * cosPsi);
 
     const dist = Math.hypot(relX, relZ);
-    if (dist > MINIMAP_RADIUS) continue;
+    if (dist > RADAR_RADIUS) continue;
 
-    const px = 120 + relX * scale;
-    const py = 120 - relZ * scale;
+    const px = RADAR_CENTER + relX * RADAR_SCALE;
+    const py = RADAR_CENTER - relZ * RADAR_SCALE;
     const src = (p.src || 'local').toLowerCase();
 
     ctx.save();
     ctx.translate(px, py);
 
+    // Marker styling based strictly on source shapes:
     if (src === 'fused') {
-      ctx.fillStyle = '#00f2fe';
+      // FUSED: Unmistakable Emerald Diamond (◇)
+      ctx.fillStyle = 'rgba(42, 245, 152, 0.55)';
       ctx.strokeStyle = '#2af598';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.moveTo(0, -5); ctx.lineTo(5, 0); ctx.lineTo(0, 5); ctx.lineTo(-5, 0);
+      ctx.moveTo(0, -7.5);
+      ctx.lineTo(6.5, 0);
+      ctx.lineTo(0, 7.5);
+      ctx.lineTo(-6.5, 0);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
     } else if (src === 'v2v') {
-      ctx.fillStyle = '#ff9a4a';
+      // V2V ONLY: Unmistakable Orange Circle (○)
+      ctx.fillStyle = 'rgba(255, 154, 74, 0.45)';
+      ctx.strokeStyle = '#ff9a4a';
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+      ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
     } else {
-      ctx.fillStyle = '#45e6ff';
-      ctx.fillRect(-4, -4, 8, 8);
+      // LOCAL ONLY: Unmistakable Cyan Square (□)
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.40)';
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 1.8;
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.strokeRect(-5, -5, 10, 10);
     }
 
+    // Highlight controller's authoritative highestRiskThreat with animated pulsing reticle
     const isHighest = highestThreat && (
-      p.id === highestThreat.id || (p.id !== -1 && p.id === highestThreat.id) ||
+      (p.id !== -1 && p.id === highestThreat.id) ||
+      p === highestThreat ||
       Math.hypot((p.wx ?? 0) - (highestThreat.wx ?? 0), (p.wz ?? 0) - (highestThreat.wz ?? 0)) < 2.0
     );
 
     if (isHighest) {
-      const pulse = 8 + Math.sin(et * 9) * 3;
-      ctx.strokeStyle = '#ff5340';
-      ctx.lineWidth = 2;
+      const pulse = 10 + Math.sin(et * 9) * 3.5;
+      ctx.strokeStyle = '#ff4340';
+      ctx.lineWidth = 2.0;
       ctx.beginPath();
       ctx.arc(0, 0, pulse, 0, Math.PI * 2);
       ctx.stroke();
 
-      if (Number.isFinite(p.ttc) && p.ttc < 5) {
-        ctx.fillStyle = '#ff5340';
-        ctx.font = '8px monospace';
-        ctx.fillText(`${p.ttc.toFixed(1)}s`, 8, -6);
+      // Threat TTC Badge
+      if (Number.isFinite(p.ttc) && p.ttc < 8) {
+        ctx.fillStyle = '#ff4340';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(`${p.ttc.toFixed(1)}s`, 9, -7);
       }
     }
 
-    if (p.id !== -1 && p.id !== undefined) {
-      ctx.fillStyle = 'rgba(207, 224, 242, 0.75)';
-      ctx.font = '7px monospace';
-      ctx.fillText(`${p.id}`, 6, 8);
-    }
+    // Stable ID Label (V2V ID for V2V/Fused, 'LOC' for Local-only)
+    const lbl = (p.id !== -1 && p.id !== undefined && p.id !== null) ? `${p.id}` : 'LOC';
+    ctx.fillStyle = '#dff0ff';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(lbl, 8, 3);
 
     ctx.restore();
   }
+
+  // 4. Ego Vehicle Marker (Centered, Directional Triangle pointing UP ▲)
+  ctx.save();
+  ctx.translate(RADAR_CENTER, RADAR_CENTER);
+  ctx.fillStyle = '#ffb454';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(7, 8);
+  ctx.lineTo(0, 5);
+  ctx.lineTo(-7, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* ---------- sensor frame for external algorithms ---------- */
@@ -5579,12 +5907,14 @@ function renderFrame() {
   renderer.clear();
   renderer.setScissorTest(true);
   renderer.render(scene, fpsCam);               // full-screen bumper cam
-  const mapX = innerWidth - MAP_PX - MAP_MARG;   // bottom-right radar
-  renderer.setViewport(mapX, MAP_MARG, MAP_PX, MAP_PX);
-  renderer.setScissor(mapX, MAP_MARG, MAP_PX, MAP_PX);
-  renderer.clearDepth();
-  renderer.render(scene, minimapCam);
-  drawMinimap(et);
+  if (minimap3dOn) {
+    const mapX = innerWidth - MAP_PX - MAP_MARG;   // bottom-right 3D top-down map
+    renderer.setViewport(mapX, MAP_MARG, MAP_PX, MAP_PX);
+    renderer.setScissor(mapX, MAP_MARG, MAP_PX, MAP_PX);
+    renderer.clearDepth();
+    renderer.render(scene, minimapCam);
+  }
+  drawTacticalRadar(et);
 }
 
 /* ---------- boot ---------- */
@@ -5607,7 +5937,7 @@ window.v2vScene = {
   get policy() { return userPolicy; },
   set policy(fn) { userPolicy = typeof fn === 'function' ? fn : null; },
   setBrakeLights: on => scenario.forEach(a => { if (a.dir === 'fwd') a.forceT = on ? 3 : 0; }),
-  setFogDensity, setHeadlights, setMode, resetRun, rebuild
+  setFogDensity, setFog: setFogDensity, setHeadlights, setTimeOfDay, setMode, resetRun, rebuild
 };
 window.__v2vBooted = true;
 
