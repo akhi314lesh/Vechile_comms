@@ -110,9 +110,9 @@ export class StoppingDistanceModel {
 export class CurvatureGovernor {
   constructor(config = {}) {
     this.mu = config.mu ?? 0.88;
-    this.latAccLimit = config.latAcc ?? 3.8;       // Max comfortable lateral acceleration (m/s²)
-    this.comfDecel = config.comfDecel ?? 2.4;     // Comfortable approach deceleration (m/s²)
-    this.lookaheadDist = config.lookahead ?? 90.0;// Max lookahead (m)
+    this.latAccLimit = config.latAcc ?? 3.2;       // Max comfortable lateral acceleration (m/s²)
+    this.comfDecel = config.comfDecel ?? 2.8;     // Comfortable approach deceleration (m/s²)
+    this.lookaheadDist = config.lookahead ?? 110.0;// Max lookahead (m)
   }
 
   evaluate(track, egoS, currentSpeed, cruiseSpeed) {
@@ -125,18 +125,18 @@ export class CurvatureGovernor {
     let maxUpcomingK = 0;
     let governorActive = false;
 
-    const scanEnd = Math.min(this.lookaheadDist, Math.max(35, currentSpeed * 3.6 + 25));
-    const dLook = Math.max(8.0, currentSpeed * 0.65);
+    const scanEnd = Math.min(this.lookaheadDist, Math.max(40, currentSpeed * 3.8 + 30));
+    const dLook = Math.max(8.0, currentSpeed * 0.70);
     const lookaheadK = track.kappaAt ? Math.abs(track.kappaAt((egoS + dLook) % (track.L || 1000))) : 0;
 
-    for (let d = 4; d <= scanEnd; d += 5) {
+    for (let d = 2; d <= scanEnd; d += 3) {
       const sAhead = (egoS + d) % (track.L || 1000);
       const k = Math.abs(track.kappaAt(sAhead));
       if (k < 1e-4) continue;
 
       if (k > maxUpcomingK) maxUpcomingK = k;
 
-      const vCurve = Math.sqrt(Math.min(this.latAccLimit, this.mu * GRAV * 0.55) / k);
+      const vCurve = Math.sqrt(Math.min(this.latAccLimit, this.mu * GRAV * 0.50) / k);
       const vApproach = Math.sqrt(vCurve * vCurve + 2 * this.comfDecel * d);
 
       if (vApproach < minAllowedSpeed) {
@@ -149,7 +149,7 @@ export class CurvatureGovernor {
       safeSpeed: Math.max(3.5, Math.min(baseSpeed, minAllowedSpeed)),
       upcomingCurvature: maxUpcomingK,
       lookaheadK,
-      governorActive: governorActive && minAllowedSpeed < baseSpeed - 1.2
+      governorActive: governorActive && minAllowedSpeed < baseSpeed - 1.0
     };
   }
 }
