@@ -1,16 +1,15 @@
 /**
  * js/controller.js — Complete Deterministic Autonomous Driving Stack
  * 
- * Includes:
- *   1. True 2D Closing Dynamics & Directional TTC
- *   2. Kinematic Stopping-Distance Prediction Model
- *   3. Proactive Curvature Speed Governor (Pre-Curve Deceleration)
- *   4. Intelligent Driver Model (IDM) Multi-Stage Car Following
- *   5. Longitudinal Anti-Windup PID Controller
- *   6. Intelligent Multi-Lane Traffic Utility Model (Congestion, Gaps, V2V Speed Flow)
- *   7. Smooth Quintic Lane-Change State Machine with Hysteresis & Cooldown
- *   8. Post-Curve Stabilized Stanley Path Follower (No Post-Turn Zigzag)
- *   9. Last-Resort AEB Safety Override Shield
+ * Dynamic Speed Behavior & Safety Architecture:
+ *   - Absolute Maximum Speed Hard Ceiling: 60 km/h (16.6667 m/s)
+ *   - Hierarchical Speed Planning: min(cruise, road, curve, traffic, closing, stoppingDist, signal, obstacle)
+ *   - Smooth Dynamic Rate-Limited Speed Transitions (No Step Jumps)
+ *   - Early Deceleration for Distant Closing Traffic
+ *   - Pre-Curve Deceleration and Smooth Post-Curve Re-Acceleration
+ *   - Intelligent Multi-Lane Traffic Utility Selection
+ *   - Post-Curve Stabilized Stanley Path Follower (Zero Post-Turn Zigzag)
+ *   - Last-Resort AEB Safety Override Shield
  * 
  * NOTE: RL is 100% untouched.
  */
@@ -20,6 +19,9 @@ import { LaneKeepController } from './lka.js';
 import { makeAEBShield } from './aeb.js';
 
 const GRAV = 9.81;
+
+/** Absolute Hard Speed Ceiling: 60 km/h */
+export const MAX_AUTONOMOUS_SPEED = 60.0 / 3.6; // 16.6667 m/s
 
 /**
  * ─── 1. PREDICTIVE COLLISION & CLOSING VELOCITY CALCULATOR ───
@@ -55,13 +57,13 @@ export function calculateClosingDynamics(ego, target) {
 }
 
 /**
- * ─── 2. STOPPING-DISTANCE PREDICTION MODEL ───
+ * ─── 2. STOPPING-DISTANCE & DISTANT CLOSING PREDICTION MODEL ───
  */
 export class StoppingDistanceModel {
   constructor(config = {}) {
-    this.reactionTime = config.reactionTime ?? 0.65;
-    this.comfDecel = config.comfDecel ?? 2.8;
-    this.safetyMargin = config.safetyMargin ?? 6.0;
+    this.reactionTime = config.reactionTime ?? 0.65; // s (autonomous system latency)
+    this.comfDecel = config.comfDecel ?? 2.8;       // m/s² (comfortable deceleration)
+    this.safetyMargin = config.safetyMargin ?? 6.0;   // m (standstill buffer)
   }
 
   calculateRequiredDistance(egoSpeed, targetSpeed = 0) {
@@ -72,6 +74,9 @@ export class StoppingDistanceModel {
     return reactDist + brakeDist + this.safetyMargin;
   }
 
+  /**
+   * Calculates maximum safe speed to stop comfortably within available distance
+   */
   calculateSafeSpeed(availableDistance, targetSpeed = 0) {
     const dAvail = Math.max(0, availableDistance - this.safetyMargin);
     if (dAvail <= 0.5) return 0.0;
@@ -83,6 +88,20 @@ export class StoppingDistanceModel {
     const vSafe = (-2 * a * tr + Math.sqrt(Math.max(0, disc))) / 2;
     return Math.max(0, vSafe);
   }
+
+  /**
+   * Calculates dynamic speed ceiling for distant closing traffic (e.g. 50-120m away)
+   * Prevents accelerating when closing on slower vehicles ahead.
+   */
+  calculateClosingSpeedCeiling(leadDist, leadSpeed) {
+    leadDist = Math.max(0, leadDist);
+    leadSpeed = Math.max(0, leadSpeed);
+    const desiredGap = this.safetyMargin + leadSpeed * 1.5;
+    const availableClosingDist = Math.max(0, leadDist - desiredGap);
+    // v_catch = v_lead + sqrt(2 * a_comf * d_avail)
+    const vClosingCap = leadSpeed + Math.sqrt(2 * this.comfDecel * availableClosingDist);
+    return Math.min(MAX_AUTONOMOUS_SPEED, vClosingCap);
+  }
 }
 
 /**
@@ -91,17 +110,18 @@ export class StoppingDistanceModel {
 export class CurvatureGovernor {
   constructor(config = {}) {
     this.mu = config.mu ?? 0.88;
-    this.latAccLimit = config.latAcc ?? 3.8;
-    this.comfDecel = config.comfDecel ?? 2.4;
-    this.lookaheadDist = config.lookahead ?? 90.0;
+    this.latAccLimit = config.latAcc ?? 3.8;       // Max comfortable lateral acceleration (m/s²)
+    this.comfDecel = config.comfDecel ?? 2.4;     // Comfortable approach deceleration (m/s²)
+    this.lookaheadDist = config.lookahead ?? 90.0;// Max lookahead (m)
   }
 
   evaluate(track, egoS, currentSpeed, cruiseSpeed) {
+    const baseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, cruiseSpeed);
     if (!track || typeof track.kappaAt !== 'function') {
-      return { safeSpeed: cruiseSpeed, upcomingCurvature: 0, lookaheadK: 0, governorActive: false };
+      return { safeSpeed: baseSpeed, upcomingCurvature: 0, lookaheadK: 0, governorActive: false };
     }
 
-    let minAllowedSpeed = cruiseSpeed;
+    let minAllowedSpeed = baseSpeed;
     let maxUpcomingK = 0;
     let governorActive = false;
 
@@ -126,10 +146,10 @@ export class CurvatureGovernor {
     }
 
     return {
-      safeSpeed: Math.max(3.5, Math.min(cruiseSpeed, minAllowedSpeed)),
+      safeSpeed: Math.max(3.5, Math.min(baseSpeed, minAllowedSpeed)),
       upcomingCurvature: maxUpcomingK,
       lookaheadK,
-      governorActive: governorActive && minAllowedSpeed < cruiseSpeed - 1.2
+      governorActive: governorActive && minAllowedSpeed < baseSpeed - 1.2
     };
   }
 }
@@ -139,16 +159,16 @@ export class CurvatureGovernor {
  */
 export class IDMController {
   constructor(config = {}) {
-    this.s0 = config.s0 ?? 6.0;
-    this.timeHeadway = config.timeHeadway ?? 1.5;
-    this.maxAccel = config.maxAccel ?? 2.8;
-    this.comfDecel = config.comfDecel ?? 3.2;
+    this.s0 = config.s0 ?? 6.0;               // Standstill buffer (m)
+    this.timeHeadway = config.timeHeadway ?? 1.5; // Desired headway (s)
+    this.maxAccel = config.maxAccel ?? 2.4;   // Comfortable acceleration (m/s²)
+    this.comfDecel = config.comfDecel ?? 3.0; // Comfortable deceleration (m/s²)
     this.delta = config.delta ?? 4.0;
   }
 
   evaluate(egoSpeed, cruiseSpeed, leadDist, leadRelSpeed, isLeadBraking = false, ttc = Infinity) {
     egoSpeed = Math.max(0.01, egoSpeed);
-    cruiseSpeed = Math.max(0.01, cruiseSpeed);
+    cruiseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, Math.max(0.01, cruiseSpeed));
 
     if (!Number.isFinite(leadDist) || leadDist > 180.0) {
       return { targetSpeed: cruiseSpeed, desiredGap: this.s0, stage: 'FREE' };
@@ -181,12 +201,12 @@ export class IDMController {
       targetSpeed = Math.min(targetSpeed, egoSpeed * 0.65);
     }
 
-    return { targetSpeed: Math.max(0, targetSpeed), desiredGap: sStar, stage };
+    return { targetSpeed: clamp(targetSpeed, 0, MAX_AUTONOMOUS_SPEED), desiredGap: sStar, stage };
   }
 }
 
 /**
- * ─── 5. LONGITUDINAL PID CONTROLLER ───
+ * ─── 5. LONGITUDINAL PID WITH SMOOTH DYNAMIC SPEED FILTER ───
  */
 export class LongitudinalPID {
   constructor(config = {}) {
@@ -200,6 +220,7 @@ export class LongitudinalPID {
 
     this.integral = 0.0;
     this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
     this.throttle = 0.0;
     this.brake = 0.0;
   }
@@ -207,23 +228,40 @@ export class LongitudinalPID {
   reset() {
     this.integral = 0.0;
     this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
     this.throttle = 0.0;
     this.brake = 0.0;
   }
 
-  update(currentSpeed, targetSpeed, dt, forceBrake = 0) {
-    if (dt <= 0) return { throttle: this.throttle, brake: this.brake, accelCmd: 0 };
+  /**
+   * Updates longitudinal controls with dynamic acceleration/deceleration smoothing
+   */
+  update(currentSpeed, rawTargetSpeed, dt, forceBrake = 0) {
+    if (dt <= 0) return { throttle: this.throttle, brake: this.brake, accelCmd: 0, filteredTarget: this.filteredTarget };
     currentSpeed = Math.max(0, currentSpeed);
-    targetSpeed = Math.max(0, targetSpeed);
+    
+    // Absolute 60 km/h Hard Limit
+    const targetSpeed = clamp(rawTargetSpeed, 0, MAX_AUTONOMOUS_SPEED);
 
     if (forceBrake > 0) {
       this.throttle = 0.0;
       this.brake = Math.max(this.brake, forceBrake);
       this.integral = 0.0;
-      return { throttle: this.throttle, brake: this.brake, accelCmd: -this.maxDecel * forceBrake };
+      this.filteredTarget = currentSpeed;
+      return { throttle: this.throttle, brake: this.brake, accelCmd: -this.maxDecel * forceBrake, filteredTarget: 0 };
     }
 
-    const error = targetSpeed - currentSpeed;
+    // Dynamic Smooth Target Speed Profiling (No instant step jumps):
+    // Smoothly ramp up at max 2.2 m/s² on empty road; ramp down at max 4.0 m/s² in traffic.
+    if (this.filteredTarget === 0 && currentSpeed > 0) {
+      this.filteredTarget = currentSpeed;
+    }
+    const maxSpeedInc = 2.2 * dt;
+    const maxSpeedDec = 4.2 * dt;
+    this.filteredTarget += clamp(targetSpeed - this.filteredTarget, -maxSpeedDec, maxSpeedInc);
+    this.filteredTarget = clamp(this.filteredTarget, 0, MAX_AUTONOMOUS_SPEED);
+
+    const error = this.filteredTarget - currentSpeed;
 
     if (Math.abs(error) > this.deadband) {
       this.integral += error * dt;
@@ -260,13 +298,12 @@ export class LongitudinalPID {
     this.throttle = clamp(this.throttle, 0.0, 1.0);
     this.brake = clamp(this.brake, 0.0, 1.0);
 
-    return { throttle: this.throttle, brake: this.brake, accelCmd };
+    return { throttle: this.throttle, brake: this.brake, accelCmd, filteredTarget: this.filteredTarget };
   }
 }
 
 /**
  * ─── 6. INTELLIGENT MULTI-LANE TRAFFIC UTILITY MODEL ───
- * Evaluates traffic congestion, space, average speed, and safety for all candidate lanes.
  */
 export class LaneUtilityModel {
   constructor(config = {}) {
@@ -276,16 +313,14 @@ export class LaneUtilityModel {
     this.minRearTTC = config.minRearTTC ?? 4.5;          // s (catches fast cars closing from behind)
   }
 
-  /**
-   * Evaluates each lane and returns comprehensive traffic metrics and scores
-   */
   evaluate(curLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature = 0) {
     const laneStats = [];
+    const effectiveCruise = Math.min(MAX_AUTONOMOUS_SPEED, cruiseSpeed);
 
     for (let laneIdx = 0; laneIdx < totalLanes; laneIdx++) {
       const laneCenter = track.laneLat ? track.laneLat('fwd', laneIdx) : laneIdx * 3.6;
       let count = 0;
-      let frontLead = null, frontDist = Infinity, frontSpeed = cruiseSpeed, frontTTC = Infinity;
+      let frontLead = null, frontDist = Infinity, frontSpeed = effectiveCruise, frontTTC = Infinity;
       let rearLead = null, rearDist = Infinity, rearSpeed = 0, rearTTC = Infinity;
       let speedSum = 0;
 
@@ -301,7 +336,6 @@ export class LaneUtilityModel {
           speedSum += objSpeed;
         }
 
-        // Front vehicle
         if (relS > 0.5 && relS < frontDist) {
           frontDist = relS;
           frontLead = obj;
@@ -310,7 +344,6 @@ export class LaneUtilityModel {
           frontTTC = closing > 0.2 ? relS / closing : Infinity;
         }
 
-        // Rear vehicle
         if (relS < -0.5 && Math.abs(relS) < rearDist) {
           rearDist = Math.abs(relS);
           rearLead = obj;
@@ -320,26 +353,19 @@ export class LaneUtilityModel {
         }
       }
 
-      const avgSpeed = count > 0 ? speedSum / count : cruiseSpeed;
+      const avgSpeed = count > 0 ? speedSum / count : effectiveCruise;
 
-      // ── Benefits ──
-      // 1. Speed Benefit (0 to 1)
-      const speedBenefit = clamp(avgSpeed / Math.max(5.0, cruiseSpeed), 0.0, 1.0);
-      // 2. Space Benefit (0 to 1)
+      const speedBenefit = clamp(avgSpeed / Math.max(5.0, effectiveCruise), 0.0, 1.0);
       const spaceBenefit = clamp(frontDist / 80.0, 0.0, 1.0);
-      // 3. Density / Free Flow Benefit (0 to 1)
       const densityBenefit = clamp(1.0 - (count / 5.0), 0.0, 1.0);
 
-      // ── Penalties & Risks ──
       let switchPenalty = (laneIdx !== curLane) ? 0.22 : 0.0;
-      let curveRisk = Math.abs(upcomingCurvature) > 0.0075 ? 0.40 : 0.0; // Inhibit lane change in sharp curves
+      let curveRisk = Math.abs(upcomingCurvature) > 0.0075 ? 0.40 : 0.0;
       let rearFastRisk = (rearLead && rearTTC < this.minRearTTC) ? 1.0 : 0.0;
 
-      // Total Utility Score
       const score = (0.42 * speedBenefit + 0.35 * spaceBenefit + 0.23 * densityBenefit)
                     - switchPenalty - curveRisk - rearFastRisk;
 
-      // Safety evaluation
       let isSafe = true;
       let unsafeReason = 'NONE';
 
@@ -383,10 +409,9 @@ export class LaneUtilityModel {
       });
     }
 
-    // Determine Best Lane
     const currentLaneStat = laneStats[curLane] || laneStats[0];
     let bestLane = curLane;
-    let highestScore = currentLaneStat.score;
+    let highestScore = currentLaneStat ? currentLaneStat.score : 0;
     let shouldChange = false;
     let changeReason = 'KEEP_LANE';
 
@@ -413,7 +438,6 @@ export class LaneUtilityModel {
 
 /**
  * ─── 7. DETERMINISTIC SMOOTH LANE CHANGE STATE MACHINE ───
- * States: KEEP_LANE, PREPARE, LANE_CHANGE, COMPLETE, ABORT
  */
 export const LaneChangeState = {
   KEEP_LANE: 'KEEP_LANE',
@@ -432,7 +456,7 @@ export class LaneChangeStateMachine {
     this.targetLat = 0.0;
     this.latPosition = 0.0;
     this.timer = 0.0;
-    this.transitionDuration = config.duration ?? 2.2; // s (smooth quintic transition)
+    this.transitionDuration = config.duration ?? 2.2;
     this.cooldown = 0.0;
     this.utilityModel = new LaneUtilityModel();
   }
@@ -454,7 +478,6 @@ export class LaneChangeStateMachine {
     this.currentLane = clamp(currentLaneIdx, 0, totalLanes - 1);
     const curCenter = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
 
-    // Traffic Utility Evaluation
     const utilResult = this.utilityModel.evaluate(
       this.currentLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature
     );
@@ -499,11 +522,9 @@ export class LaneChangeStateMachine {
 
       case LaneChangeState.LANE_CHANGE: {
         const tau = clamp(this.timer / this.transitionDuration, 0.0, 1.0);
-        // Smooth Quintic Polynomial: 10*tau^3 - 15*tau^4 + 6*tau^5 (zero jerk at ends)
         const smoothU = tau * tau * tau * (10 - 15 * tau + 6 * tau * tau);
         this.latPosition = this.startLat + (this.targetLat - this.startLat) * smoothU;
 
-        // Safety abort check during early transition
         if (tau < 0.4) {
           const checkStat = utilResult.laneStats[this.targetLane];
           if (checkStat && !checkStat.isSafe) {
@@ -525,7 +546,7 @@ export class LaneChangeStateMachine {
 
       case LaneChangeState.COMPLETE:
         this.currentLane = this.targetLane;
-        this.cooldown = 3.5; // Post-maneuver cooldown prevents lane fluttering
+        this.cooldown = 3.5;
         this.state = LaneChangeState.KEEP_LANE;
         break;
 
@@ -593,26 +614,29 @@ export class AutonomousDrivingStack {
     const omega = egoState.om ?? 0;
     const totalLanes = track.def ? track.def.lanesF : 2;
 
-    // ── 1. Curvature Lookahead Profile ──
-    let safeSpeed = baseCruiseSpeed;
+    // ── 1. Absolute Maximum Speed Ceiling Clamp (60 km/h) ──
+    const effectiveCruise = clamp(baseCruiseSpeed, 0, MAX_AUTONOMOUS_SPEED);
+
+    // ── 2. Curvature Lookahead Profile ──
+    let safeSpeed = effectiveCruise;
     let lookaheadK = kappa;
     let upcomingCurvature = 0;
 
     if (adas.gov) {
-      const govResult = this.gov.evaluate(track, egoS, u, baseCruiseSpeed);
+      const govResult = this.gov.evaluate(track, egoS, u, effectiveCruise);
       safeSpeed = Math.min(safeSpeed, govResult.safeSpeed);
       lookaheadK = Math.max(kappa, govResult.lookaheadK);
       upcomingCurvature = govResult.upcomingCurvature;
     }
 
-    // ── 2. Intelligent Lane Selection & State Machine ──
+    // ── 3. Intelligent Lane Selection & State Machine ──
     let targetLat = egoLat;
     let lcActive = false;
     let utilInfo = null;
 
     if (adas.alc) {
       const lcResult = this.laneMachine.update(
-        dt, laneRequest, egoLat, egoS, u, baseCruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature, adas.autoPass
+        dt, laneRequest, egoLat, egoS, u, effectiveCruise, totalLanes, perceivedObjects, track, upcomingCurvature, adas.autoPass
       );
       targetLat = lcResult.targetLateral;
       lcActive = lcResult.active;
@@ -622,7 +646,7 @@ export class AutonomousDrivingStack {
       targetLat = track.laneLat ? track.laneLat('fwd', clamp(curLane, 0, totalLanes - 1)) : egoLat;
     }
 
-    // ── 3. Lead Vehicle Following & Predictive Stopping Distance ──
+    // ── 4. Lead Vehicle Following, Stopping Distance & Distant Closing Prediction ──
     let nearestLead = null;
     let minLeadDist = Infinity;
     let minLeadTTC = Infinity;
@@ -645,17 +669,27 @@ export class AutonomousDrivingStack {
     let isLeadBraking = false;
     let leadRelSpeed = 0.0;
     if (nearestLead) {
-      leadRelSpeed = (nearestLead.vAlong ?? nearestLead.speed ?? 0) - u;
+      const leadSpeed = nearestLead.vAlong ?? nearestLead.speed ?? 0;
+      leadRelSpeed = leadSpeed - u;
       isLeadBraking = nearestLead.braking || false;
 
+      // A. IDM Target Speed
       const idmResult = this.idm.evaluate(u, safeSpeed, minLeadDist, leadRelSpeed, isLeadBraking, minLeadTTC);
       safeSpeed = Math.min(safeSpeed, idmResult.targetSpeed);
 
-      const stopSpeedCeil = this.stopModel.calculateSafeSpeed(minLeadDist, Math.max(0, u + leadRelSpeed));
+      // B. Kinematic Stopping Distance Ceiling
+      const stopSpeedCeil = this.stopModel.calculateSafeSpeed(minLeadDist, Math.max(0, leadSpeed));
       safeSpeed = Math.min(safeSpeed, stopSpeedCeil);
+
+      // C. Distant Closing Prediction Ceiling (prevents accelerating when rapidly catching traffic ahead)
+      const closingCeil = this.stopModel.calculateClosingSpeedCeiling(minLeadDist, leadSpeed);
+      safeSpeed = Math.min(safeSpeed, closingCeil);
     }
 
-    // ── 4. Multi-Stage Progressive Braking ──
+    // ── 5. Hierarchical Minimum Clamp (Max 60 km/h) ──
+    safeSpeed = clamp(safeSpeed, 0, MAX_AUTONOMOUS_SPEED);
+
+    // ── 6. Multi-Stage Progressive Braking ──
     let forceBrake = 0.0;
     let alertMsg = lcActive ? 'LANE CHANGE ACTIVE' : 'CRUISE';
     let alertSev = 0;
@@ -675,15 +709,15 @@ export class AutonomousDrivingStack {
       alertSev = 1;
     }
 
-    // ── 5. Longitudinal PID Controller ──
+    // ── 7. Longitudinal PID Controller (Smooth Dynamic Acceleration/Deceleration) ──
     const pidResult = this.pid.update(u, safeSpeed, dt, forceBrake);
 
-    // ── 6. Post-Curve Stabilized Stanley Path Follower ──
+    // ── 8. Post-Curve Stabilized Stanley Path Follower (Zero Post-Turn Zigzag) ──
     const eLat = egoLat - targetLat;
     const ePsi = wrapAngle(egoPsi - roadPsi);
     const steerCmd = this.lka.update(eLat, ePsi, lookaheadK, u, omega);
 
-    // ── 7. Deterministic 360° Safety Shield (Blind Spot Protection) ──
+    // ── 9. Deterministic 360° Safety Shield (Blind Spot Protection) ──
     const candidateCtrl = {
       steer: steerCmd,
       throttle: pidResult.throttle,
@@ -700,6 +734,7 @@ export class AutonomousDrivingStack {
       throttle: finalControl.throttle,
       brake: finalControl.brake,
       targetSpeed: safeSpeed,
+      filteredTargetSpeed: pidResult.filteredTarget,
       alert: finalControl.alert !== 'NONE' ? finalControl.alert : alertMsg,
       severity: Math.max(alertSev, finalControl.severity || 0),
       diag: {

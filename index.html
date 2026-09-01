@@ -2349,10 +2349,12 @@ function updateCameraFeed() {
    1. StoppingDistanceModel — Kinematic reaction + braking distance prediction
    2. CurvatureGovernor     — Proactive curve deceleration envelope
    3. IDMController         — Intelligent Driver Model with multi-stage TTC following
-   4. LongitudinalPID       — Anti-windup PID speed & acceleration controller
+   4. LongitudinalPID       — Anti-windup PID with smooth dynamic acceleration filter
    5. LaneChangeStateMachine — Deterministic multi-state lane changing & auto-pass
-   6. StanleySteering       — Curvature-lookahead cross-track + heading alignment
+   6. StanleySteering       — Curvature-lookahead cross-track + excess yaw damping
    ================================================================ */
+const MAX_AUTONOMOUS_SPEED = 60.0 / 3.6; // 16.6667 m/s (60 km/h hard ceiling)
+
 function createADAS() { return { lka: true, aeb: true, gov: true, alc: true }; }
 
 function calculateClosingDynamics(ego, target) {
@@ -2393,6 +2395,14 @@ class StoppingDistanceModel {
     const vSafe = (-2 * a * tr + Math.sqrt(Math.max(0, disc))) / 2;
     return Math.max(0, vSafe);
   }
+  calculateClosingSpeedCeiling(leadDist, leadSpeed) {
+    leadDist = Math.max(0, leadDist);
+    leadSpeed = Math.max(0, leadSpeed);
+    const desiredGap = this.safetyMargin + leadSpeed * 1.5;
+    const availableClosingDist = Math.max(0, leadDist - desiredGap);
+    const vClosingCap = leadSpeed + Math.sqrt(2 * this.comfDecel * availableClosingDist);
+    return Math.min(MAX_AUTONOMOUS_SPEED, vClosingCap);
+  }
 }
 
 class CurvatureGovernor {
@@ -2403,8 +2413,9 @@ class CurvatureGovernor {
     this.lookaheadDist = config.lookahead ?? 90.0;
   }
   evaluate(track, egoS, currentSpeed, cruiseSpeed) {
-    if (!track || typeof track.kappaAt !== 'function') return { safeSpeed: cruiseSpeed, lookaheadK: 0, governorActive: false };
-    let minAllowedSpeed = cruiseSpeed;
+    const baseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, cruiseSpeed);
+    if (!track || typeof track.kappaAt !== 'function') return { safeSpeed: baseSpeed, lookaheadK: 0, governorActive: false };
+    let minAllowedSpeed = baseSpeed;
     let governorActive = false;
     const scanEnd = Math.min(this.lookaheadDist, Math.max(35, currentSpeed * 3.6 + 25));
     const dLook = Math.max(8.0, currentSpeed * 0.65);
@@ -2422,9 +2433,9 @@ class CurvatureGovernor {
       }
     }
     return {
-      safeSpeed: Math.max(3.5, Math.min(cruiseSpeed, minAllowedSpeed)),
+      safeSpeed: Math.max(3.5, Math.min(baseSpeed, minAllowedSpeed)),
       lookaheadK,
-      governorActive: governorActive && minAllowedSpeed < cruiseSpeed - 1.2
+      governorActive: governorActive && minAllowedSpeed < baseSpeed - 1.2
     };
   }
 }
@@ -2433,13 +2444,13 @@ class IDMController {
   constructor(config = {}) {
     this.s0 = config.s0 ?? 6.0;
     this.timeHeadway = config.timeHeadway ?? 1.5;
-    this.maxAccel = config.maxAccel ?? 2.8;
-    this.comfDecel = config.comfDecel ?? 3.2;
+    this.maxAccel = config.maxAccel ?? 2.4;
+    this.comfDecel = config.comfDecel ?? 3.0;
     this.delta = config.delta ?? 4.0;
   }
   evaluate(egoSpeed, cruiseSpeed, leadDist, leadRelSpeed, isLeadBraking = false, ttc = Infinity) {
     egoSpeed = Math.max(0.01, egoSpeed);
-    cruiseSpeed = Math.max(0.01, cruiseSpeed);
+    cruiseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, Math.max(0.01, cruiseSpeed));
     if (!Number.isFinite(leadDist) || leadDist > 180.0) {
       return { targetSpeed: cruiseSpeed, desiredGap: this.s0, stage: 'FREE' };
     }
@@ -2468,7 +2479,7 @@ class IDMController {
     if (isLeadBraking && leadDist < 60.0) {
       targetSpeed = Math.min(targetSpeed, egoSpeed * 0.65);
     }
-    return { targetSpeed: Math.max(0, targetSpeed), desiredGap: sStar, stage };
+    return { targetSpeed: clamp(targetSpeed, 0, MAX_AUTONOMOUS_SPEED), desiredGap: sStar, stage };
   }
 }
 
@@ -2483,28 +2494,39 @@ class LongitudinalPID {
     this.deadband = config.deadband ?? 0.20;
     this.integral = 0.0;
     this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
     this.throttle = 0.0;
     this.brake = 0.0;
   }
   reset() {
     this.integral = 0.0;
     this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
     this.throttle = 0.0;
     this.brake = 0.0;
   }
-  update(currentSpeed, targetSpeed, dt, forceBrake = 0) {
-    if (dt <= 0) return { throttle: this.throttle, brake: this.brake };
+  update(currentSpeed, rawTargetSpeed, dt, forceBrake = 0) {
+    if (dt <= 0) return { throttle: this.throttle, brake: this.brake, filteredTarget: this.filteredTarget };
     currentSpeed = Math.max(0, currentSpeed);
-    targetSpeed = Math.max(0, targetSpeed);
+    const targetSpeed = clamp(rawTargetSpeed, 0, MAX_AUTONOMOUS_SPEED);
 
     if (forceBrake > 0) {
       this.throttle = 0.0;
       this.brake = Math.max(this.brake, forceBrake);
       this.integral = 0.0;
-      return { throttle: this.throttle, brake: this.brake };
+      this.filteredTarget = currentSpeed;
+      return { throttle: this.throttle, brake: this.brake, filteredTarget: 0 };
     }
 
-    const error = targetSpeed - currentSpeed;
+    if (this.filteredTarget === 0 && currentSpeed > 0) {
+      this.filteredTarget = currentSpeed;
+    }
+    const maxSpeedInc = 2.2 * dt;
+    const maxSpeedDec = 4.2 * dt;
+    this.filteredTarget += clamp(targetSpeed - this.filteredTarget, -maxSpeedDec, maxSpeedInc);
+    this.filteredTarget = clamp(this.filteredTarget, 0, MAX_AUTONOMOUS_SPEED);
+
+    const error = this.filteredTarget - currentSpeed;
     if (Math.abs(error) > this.deadband) {
       this.integral += error * dt;
       this.integral = clamp(this.integral, -this.integralLimit, this.integralLimit);
@@ -2535,7 +2557,7 @@ class LongitudinalPID {
     this.brake += clamp(targetBrake - this.brake, -maxBrakeRate, maxBrakeRate);
     this.throttle = clamp(this.throttle, 0.0, 1.0);
     this.brake = clamp(this.brake, 0.0, 1.0);
-    return { throttle: this.throttle, brake: this.brake };
+    return { throttle: this.throttle, brake: this.brake, filteredTarget: this.filteredTarget };
   }
 }
 
@@ -2810,12 +2832,13 @@ function computePolicy(dt, proj) {
   const curLaneCenter = T.laneLat ? T.laneLat('fwd', curLane) : egoLat;
 
   // 1. Proactive Curvature Lookahead Profile
-  let safeSpeed = player.cruise;
+  const effectiveCruise = clamp(player.cruise, 0, MAX_AUTONOMOUS_SPEED);
+  let safeSpeed = effectiveCruise;
   let lookaheadK = proj.kappa || 0;
   let upcomingCurvature = 0;
 
   if (adas.gov) {
-    const gov = curveGov.evaluate(T, egoS, u, player.cruise);
+    const gov = curveGov.evaluate(T, egoS, u, effectiveCruise);
     if (gov.safeSpeed < safeSpeed) {
       safeSpeed = gov.safeSpeed;
       out.govActive = gov.governorActive;
@@ -2829,7 +2852,7 @@ function computePolicy(dt, proj) {
   let targetLat = egoLat;
   if (adas.alc) {
     const lc = alcMachine.update(
-      dt, alc.reqDir, egoLat, egoS, u, player.cruise, lanesF, perceived, T, upcomingCurvature
+      dt, alc.reqDir, egoLat, egoS, u, effectiveCruise, lanesF, perceived, T, upcomingCurvature
     );
     alc.reqDir = 0;
     targetLat = lc.targetLateral;
@@ -2853,7 +2876,7 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // 4. Lead Vehicle Following & Predictive Stopping Distance
+  // 4. Lead Vehicle Following, Stopping Distance & Distant Closing Prediction
   let lead = null, minLeadDist = 1e9, minLeadTTC = 1e9, minLeadClosingV = 0;
   for (const p of perceived) {
     if ((p.vAlong ?? p.v ?? 0) < -0.5) continue;
@@ -2871,16 +2894,20 @@ function computePolicy(dt, proj) {
   let isLeadBraking = false;
   let forceBrake = 0.0;
   if (lead) {
-    const leadRelV = (lead.vAlong ?? lead.v ?? 0) - u;
-    isLeadBraking = lead.braking || (lead.src === 'v2v' && (lead.vAlong ?? lead.v ?? 0) < u - 3);
+    const leadSpeed = lead.vAlong ?? lead.v ?? 0;
+    const leadRelV = leadSpeed - u;
+    isLeadBraking = lead.braking || (lead.src === 'v2v' && leadSpeed < u - 3);
     out.v2vActive = lead.src === 'v2v';
     out.aebActive = lead.src === 'local';
 
     const idm = idmFollower.evaluate(u, safeSpeed, minLeadDist, leadRelV, isLeadBraking, minLeadTTC);
     safeSpeed = Math.min(safeSpeed, idm.targetSpeed);
 
-    const stopSpeedCeil = stopDistModel.calculateSafeSpeed(minLeadDist, Math.max(0, u + leadRelV));
+    const stopSpeedCeil = stopDistModel.calculateSafeSpeed(minLeadDist, Math.max(0, leadSpeed));
     safeSpeed = Math.min(safeSpeed, stopSpeedCeil);
+
+    const closingCeil = stopDistModel.calculateClosingSpeedCeiling(minLeadDist, leadSpeed);
+    safeSpeed = Math.min(safeSpeed, closingCeil);
 
     // Multi-stage progressive braking alerts
     if (minLeadDist < 6.5 || minLeadTTC < 1.35) {
@@ -2901,6 +2928,9 @@ function computePolicy(dt, proj) {
     }
   }
 
+  // Hierarchical Speed Clamp: Maximum 60 km/h (16.6667 m/s)
+  safeSpeed = clamp(safeSpeed, 0, MAX_AUTONOMOUS_SPEED);
+
   // 5. Side Blind Spot Protection
   const prox = SENS.proximity;
   if (prox && adas.aeb) {
@@ -2914,7 +2944,7 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // 6. Longitudinal PID Controller
+  // 6. Longitudinal PID Controller (Smooth Dynamic Acceleration/Deceleration)
   const pid = longPID.update(u, safeSpeed, dt, forceBrake);
   out.throttle = pid.throttle;
   out.brake = pid.brake;

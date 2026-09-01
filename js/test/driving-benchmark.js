@@ -378,11 +378,11 @@ export function runAllBenchmarks() {
     leadVehicles: [{ s: 50, lat: 0.0, u: 12.0, src: 'local' }]
   }));
 
-  // 13. High-speed Highway Driving (35 m/s = 126 km/h)
-  results.push(runScenario('13. High-Speed Highway (35 m/s)', {
+  // 13. High-speed Highway Driving with 60 km/h Hard Limit (Requested 30 m/s -> Capped at 16.67 m/s)
+  results.push(runScenario('13. 60 km/h Hard Speed Ceiling', {
     duration: 10.0,
-    initialSpeed: 35.0,
-    cruiseSpeed: 35.0,
+    initialSpeed: 14.0,
+    cruiseSpeed: 30.0,
     track: new SimpleTrack(3000, 2, [{ sStart: 100, sEnd: 600, kappa: 1.0 / 400 }])
   }));
 
@@ -440,6 +440,29 @@ export function runAllBenchmarks() {
     cruiseSpeed: 16.0,
     laneRequest: 1,
     expectedTargetLat: 3.6
+  }));
+
+  // 19. Distant Closing Lead Vehicle (100m Ahead @ 7 m/s -> Smooth Early Deceleration)
+  results.push(runScenario('19. Distant Slower Lead (100m)', {
+    duration: 12.0,
+    initialSpeed: 15.0,
+    cruiseSpeed: 16.0,
+    leadVehicles: [{ s: 100, lat: 0.0, u: 7.0 }]
+  }));
+
+  // 20. Empty Road Smooth Acceleration (6 m/s -> Smooth Ramp to 15 m/s)
+  results.push(runScenario('20. Empty Road Smooth Acceleration', {
+    duration: 10.0,
+    initialSpeed: 6.0,
+    cruiseSpeed: 15.0
+  }));
+
+  // 21. Traffic Clears -> Dynamic Re-Acceleration (8 m/s -> 15 m/s)
+  results.push(runScenario('21. Traffic Clears -> Speed Restoration', {
+    duration: 12.0,
+    initialSpeed: 8.0,
+    cruiseSpeed: 15.0,
+    leadVehicles: [{ s: 40, lat: 0.0, u: 16.0 }]
   }));
 
   // Print Report Table
