@@ -1,0 +1,6 @@
+--extra-index-url https://download.pytorch.org/whl/cu132
+torch==2.14.0+cu132
+numpy>=1.22.0
+websockets>=11.0
+matplotlib>=3.5.0
+tensorboard>=2.10.0
