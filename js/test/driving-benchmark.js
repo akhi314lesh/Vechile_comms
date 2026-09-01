@@ -115,6 +115,7 @@ function runScenario(name, setup) {
     leadVehicles = [],
     laneRequest = 0,
     expectedTargetLat = 0.0,
+    evalStart = 5.0,
     adas = { lka: true, aeb: true, gov: true, alc: true }
   } = setup;
 
@@ -235,8 +236,8 @@ function runScenario(name, setup) {
       }
     }
 
-    // Record lateral error after settling (t > 5.0s)
-    if (step > Math.round(5.0 / DT)) {
+    // Record lateral error after settling (t > evalStart)
+    if (step > Math.round(evalStart / DT)) {
       const latErr = Math.abs(ego.lat - expectedTargetLat);
       lateralErrors.push(latErr);
       if (latErr > 1.8) laneDepartures++;
@@ -385,6 +386,62 @@ export function runAllBenchmarks() {
     track: new SimpleTrack(3000, 2, [{ sStart: 100, sEnd: 600, kappa: 1.0 / 400 }])
   }));
 
+  // 14. Sharp Left Curve -> Straight Exit (Zero Post-Turn Zigzag)
+  results.push(runScenario('14. Left Curve -> Straight Exit', {
+    duration: 10.0,
+    initialSpeed: 16.0,
+    cruiseSpeed: 16.0,
+    evalStart: 6.5,
+    track: new SimpleTrack(2000, 2, [{ sStart: 20, sEnd: 80, kappa: 1.0 / 75.0 }])
+  }));
+
+  // 15. Sharp Right Curve -> Straight Exit (Zero Post-Turn Zigzag)
+  results.push(runScenario('15. Right Curve -> Straight Exit', {
+    duration: 10.0,
+    initialSpeed: 16.0,
+    cruiseSpeed: 16.0,
+    evalStart: 6.5,
+    track: new SimpleTrack(2000, 2, [{ sStart: 20, sEnd: 80, kappa: -1.0 / 75.0 }])
+  }));
+
+  // 16. Congested Current Lane -> Auto-Select Fast Empty Lane (Intelligent Lane Selection)
+  results.push(runScenario('16. Congested Lane -> Auto-Select Lane 1', {
+    duration: 14.0,
+    initialSpeed: 16.0,
+    cruiseSpeed: 18.0,
+    evalStart: 8.0,
+    adas: { lka: true, aeb: true, gov: true, alc: true, autoPass: true },
+    leadVehicles: [
+      { s: 25, lat: 0.0, u: 8.0 },
+      { s: 45, lat: 0.0, u: 8.0 },
+      { s: 65, lat: 0.0, u: 8.0 }
+    ],
+    expectedTargetLat: 3.6
+  }));
+
+  // 17. Congested Lane with Fast V2V Rear Vehicle -> Inhibit Lane Change (Safety Override)
+  results.push(runScenario('17. Fast Rear Vehicle -> Hold Lane', {
+    duration: 3.5,
+    initialSpeed: 12.0,
+    cruiseSpeed: 16.0,
+    evalStart: 1.0,
+    adas: { lka: true, aeb: true, gov: true, alc: true, autoPass: true },
+    leadVehicles: [
+      { s: 30, lat: 0.0, u: 8.0 },
+      { s: -25, lat: 3.6, u: 24.0, src: 'v2v' } // Fast vehicle closing from rear in Lane 1
+    ],
+    expectedTargetLat: 0.0
+  }));
+
+  // 18. Post-Lane-Change Centering Stabilization
+  results.push(runScenario('18. Post-Lane-Change Stabilization', {
+    duration: 10.0,
+    initialSpeed: 16.0,
+    cruiseSpeed: 16.0,
+    laneRequest: 1,
+    expectedTargetLat: 3.6
+  }));
+
   // Print Report Table
   console.log('| Scenario Name                     | Pass/Fail | Collisions | Max |e_lat| | Avg Speed | Harsh Brk |');
   console.log('|-----------------------------------|-----------|------------|-------------|-----------|-----------|');
@@ -394,7 +451,7 @@ export function runAllBenchmarks() {
     const status = r.passed ? '✅ PASS' : '❌ FAIL';
     if (r.passed) totalPassed++;
     console.log(
-      `| ${r.name.padEnd(33)} | ${status.padEnd(9)} | ${String(r.collisions).padStart(10)} | ${r.maxLatErr.toFixed(3).padStart(10)}m | ${(r.avgSpeed.toFixed(1) + ' m/s').padStart(9)} | ${String(r.harshBraking).padStart(9)} |`
+      `| ${r.name.padEnd(35)} | ${status.padEnd(9)} | ${String(r.collisions).padStart(10)} | ${r.maxLatErr.toFixed(3).padStart(10)}m | ${(r.avgSpeed.toFixed(1) + ' m/s').padStart(9)} | ${String(r.harshBraking).padStart(9)} |`
     );
   }
 

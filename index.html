@@ -2539,18 +2539,94 @@ class LongitudinalPID {
   }
 }
 
+class LaneUtilityModel {
+  constructor(config = {}) {
+    this.minImprovement = config.minImprovement ?? 0.18;
+    this.minFrontGap = config.minFrontGap ?? 25.0;
+    this.minRearGap = config.minRearGap ?? 20.0;
+    this.minRearTTC = config.minRearTTC ?? 4.5;
+  }
+  evaluate(curLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature = 0) {
+    const laneStats = [];
+    for (let laneIdx = 0; laneIdx < totalLanes; laneIdx++) {
+      const laneCenter = track.laneLat ? track.laneLat('fwd', laneIdx) : laneIdx * 3.6;
+      let count = 0;
+      let frontDist = Infinity, frontSpeed = cruiseSpeed, frontTTC = Infinity;
+      let rearDist = Infinity, rearSpeed = 0, rearTTC = Infinity;
+      let speedSum = 0;
+
+      for (const obj of perceivedObjects || []) {
+        if (Math.abs((obj.lat ?? 0) - laneCenter) > 1.9) continue;
+        const relS = track.wrapS ? track.wrapS(obj.s - egoS) : (obj.s - egoS);
+        const objSpeed = obj.vAlong ?? obj.speed ?? obj.v ?? 0;
+        if (relS > -50 && relS < 130) { count++; speedSum += objSpeed; }
+        if (relS > 0.5 && relS < frontDist) {
+          frontDist = relS;
+          frontSpeed = objSpeed;
+          const closing = egoSpeed - objSpeed;
+          frontTTC = closing > 0.2 ? relS / closing : Infinity;
+        }
+        if (relS < -0.5 && Math.abs(relS) < rearDist) {
+          rearDist = Math.abs(relS);
+          rearSpeed = objSpeed;
+          const rearClosing = objSpeed - egoSpeed;
+          rearTTC = rearClosing > 0.2 ? Math.abs(relS) / rearClosing : Infinity;
+        }
+      }
+      const avgSpeed = count > 0 ? speedSum / count : cruiseSpeed;
+      const speedBenefit = clamp(avgSpeed / Math.max(5.0, cruiseSpeed), 0.0, 1.0);
+      const spaceBenefit = clamp(frontDist / 80.0, 0.0, 1.0);
+      const densityBenefit = clamp(1.0 - (count / 5.0), 0.0, 1.0);
+
+      let switchPenalty = (laneIdx !== curLane) ? 0.22 : 0.0;
+      let curveRisk = Math.abs(upcomingCurvature) > 0.0075 ? 0.40 : 0.0;
+      let rearFastRisk = (rearTTC < this.minRearTTC) ? 1.0 : 0.0;
+
+      const score = (0.42 * speedBenefit + 0.35 * spaceBenefit + 0.23 * densityBenefit)
+                    - switchPenalty - curveRisk - rearFastRisk;
+
+      let isSafe = true;
+      if (frontDist < 18.0) isSafe = false;
+      else if (frontDist < this.minFrontGap && (egoSpeed - frontSpeed) > -0.5) isSafe = false;
+      else if (rearDist < 18.0) isSafe = false;
+      else if (rearDist < this.minRearGap && (rearSpeed - egoSpeed) > -0.5) isSafe = false;
+      else if (rearTTC < this.minRearTTC) isSafe = false;
+      else if (frontTTC < 2.5) isSafe = false;
+      else if (Math.abs(upcomingCurvature) > 0.009) isSafe = false;
+
+      laneStats.push({ laneIdx, laneCenter, count, frontDist, frontSpeed, frontTTC, rearDist, rearSpeed, rearTTC, avgSpeed, score, isSafe });
+    }
+
+    const currentLaneStat = laneStats[curLane] || laneStats[0];
+    let bestLane = curLane;
+    let highestScore = currentLaneStat ? currentLaneStat.score : 0;
+    let shouldChange = false;
+
+    for (let laneIdx = 0; laneIdx < totalLanes; laneIdx++) {
+      if (laneIdx === curLane) continue;
+      const cand = laneStats[laneIdx];
+      if (cand && cand.isSafe && cand.score > highestScore + this.minImprovement) {
+        highestScore = cand.score;
+        bestLane = laneIdx;
+        shouldChange = true;
+      }
+    }
+    return { currentLane: curLane, bestLane, shouldChange, laneStats };
+  }
+}
+
 class LaneChangeStateMachine {
   constructor(config = {}) {
     this.state = 'KEEP_LANE';
     this.currentLane = 0;
     this.targetLane = 0;
+    this.startLat = 0.0;
+    this.targetLat = 0.0;
     this.latPosition = 0.0;
     this.timer = 0.0;
+    this.transitionDuration = config.duration ?? 2.2;
     this.cooldown = 0.0;
-    this.lateralSpeed = config.latSpeed ?? 1.45;
-    this.minFrontGap = config.minFrontGap ?? 25.0;
-    this.minRearGap = config.minRearGap ?? 18.0;
-    this.minTTC = config.minTTC ?? 3.2;
+    this.utilityModel = new LaneUtilityModel();
   }
   reset() {
     this.state = 'KEEP_LANE';
@@ -2560,87 +2636,152 @@ class LaneChangeStateMachine {
     this.timer = 0.0;
     this.cooldown = 0.0;
   }
-  isLaneSafe(targetLane, perceivedObjects, egoS, egoLat, egoSpeed, track) {
-    if (!track || !track.laneLat) return true;
-    const targetCenter = track.laneLat('fwd', targetLane);
-    for (const obj of perceivedObjects || []) {
-      if (Math.abs(obj.lat - targetCenter) > 2.0) continue;
-      const relS = track.wrapS ? track.wrapS(obj.s - egoS) : (obj.s - egoS);
-      const relV = (obj.vAlong ?? obj.speed ?? 0) - egoSpeed;
-      if (relS >= 0 && relS < this.minFrontGap) return false;
-      if (relS < 0 && relS > -this.minRearGap) return false;
-      if (relS > 0 && relV < -0.5) {
-        if (relS / Math.abs(relV) < this.minTTC) return false;
-      }
-    }
-    return true;
-  }
-  update(dt, reqDir, egoLat, egoS, egoSpeed, totalLanes, perceivedObjects, track) {
+  update(dt, reqDir, egoLat, egoS, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature = 0) {
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.timer += dt;
     const currentLaneIdx = Math.round((egoLat - (track.laneLat ? track.laneLat('fwd', 0) : 0)) / 3.6);
     this.currentLane = clamp(currentLaneIdx, 0, totalLanes - 1);
+    const curCenter = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
+
+    const utilResult = this.utilityModel.evaluate(
+      this.currentLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature
+    );
 
     switch (this.state) {
       case 'KEEP_LANE':
-        this.latPosition = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
-        if (reqDir !== 0 && this.cooldown <= 0) {
-          const desiredLane = this.currentLane + reqDir;
-          if (desiredLane >= 0 && desiredLane < totalLanes) {
-            this.targetLane = desiredLane;
-            this.state = 'PREPARE';
-            this.timer = 0;
+        this.latPosition = curCenter;
+        if (this.cooldown <= 0) {
+          let desiredLane = this.currentLane;
+          if (reqDir !== 0) {
+            desiredLane = clamp(this.currentLane + reqDir, 0, totalLanes - 1);
+          } else if (utilResult.shouldChange) {
+            desiredLane = utilResult.bestLane;
+          }
+
+          if (desiredLane !== this.currentLane) {
+            const targetStat = utilResult.laneStats[desiredLane];
+            if (targetStat && targetStat.isSafe) {
+              this.targetLane = desiredLane;
+              this.startLat = egoLat;
+              this.targetLat = track.laneLat ? track.laneLat('fwd', desiredLane) : desiredLane * 3.6;
+              this.state = 'PREPARE';
+              this.timer = 0.0;
+            }
           }
         }
         break;
+
       case 'PREPARE':
-        this.latPosition = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
-        if (this.isLaneSafe(this.targetLane, perceivedObjects, egoS, egoLat, egoSpeed, track)) {
+        this.latPosition = curCenter;
+        const targetStat = utilResult.laneStats[this.targetLane];
+        if (targetStat && targetStat.isSafe) {
           this.state = 'LANE_CHANGE';
-          this.timer = 0;
-        } else if (this.timer > 3.0) {
+          this.startLat = egoLat;
+          this.targetLat = track.laneLat ? track.laneLat('fwd', this.targetLane) : this.targetLane * 3.6;
+          this.timer = 0.0;
+        } else if (this.timer > 2.5) {
           this.state = 'ABORT';
+          this.timer = 0.0;
         }
         break;
+
       case 'LANE_CHANGE': {
-        const goalLat = track.laneLat ? track.laneLat('fwd', this.targetLane) : egoLat;
-        const dir = Math.sign(goalLat - this.latPosition);
-        this.latPosition += dir * this.lateralSpeed * dt;
-        const progress = Math.abs(egoLat - (track.laneLat ? track.laneLat('fwd', this.currentLane) : 0));
-        if (progress < 1.0 && !this.isLaneSafe(this.targetLane, perceivedObjects, egoS, egoLat, egoSpeed, track)) {
-          this.state = 'ABORT';
-          break;
+        const tau = clamp(this.timer / this.transitionDuration, 0.0, 1.0);
+        const smoothU = tau * tau * tau * (10 - 15 * tau + 6 * tau * tau);
+        this.latPosition = this.startLat + (this.targetLat - this.startLat) * smoothU;
+
+        if (tau < 0.4) {
+          const checkStat = utilResult.laneStats[this.targetLane];
+          if (checkStat && !checkStat.isSafe) {
+            this.state = 'ABORT';
+            this.startLat = egoLat;
+            this.targetLat = curCenter;
+            this.timer = 0.0;
+            break;
+          }
         }
-        if (dir === 0 || (dir > 0 && this.latPosition >= goalLat) || (dir < 0 && this.latPosition <= goalLat)) {
-          this.latPosition = goalLat;
+
+        if (tau >= 1.0) {
+          this.latPosition = this.targetLat;
           this.state = 'COMPLETE';
-          this.timer = 0;
+          this.timer = 0.0;
         }
         break;
       }
+
       case 'COMPLETE':
         this.currentLane = this.targetLane;
-        this.cooldown = 2.0;
+        this.cooldown = 3.5;
         this.state = 'KEEP_LANE';
         break;
+
       case 'ABORT': {
-        const origLat = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
-        const dir = Math.sign(origLat - this.latPosition);
-        this.latPosition += dir * this.lateralSpeed * 1.5 * dt;
-        if (dir === 0 || (dir > 0 && this.latPosition >= origLat) || (dir < 0 && this.latPosition <= origLat)) {
-          this.latPosition = origLat;
-          this.cooldown = 3.0;
+        const tau = clamp(this.timer / 1.5, 0.0, 1.0);
+        const smoothU = tau * tau * (3 - 2 * tau);
+        this.latPosition = this.startLat + (curCenter - this.startLat) * smoothU;
+        if (tau >= 1.0) {
+          this.latPosition = curCenter;
+          this.cooldown = 4.0;
           this.state = 'KEEP_LANE';
         }
         break;
       }
     }
+
     return {
       state: this.state,
       targetLateral: this.latPosition,
       active: this.state === 'LANE_CHANGE' || this.state === 'ABORT',
-      targetLane: this.targetLane
+      targetLane: this.targetLane,
+      utilResult
     };
+  }
+}
+
+class LaneKeepController {
+  constructor(config = {}) {
+    this.dt = config.dt ?? 1.0 / 30.0;
+    this.kLatGain = config.kLatGain ?? 0.38;
+    this.kLatSpeed = config.kLatSpeed ?? 0.055;
+    this.kHead = config.kHead ?? 0.65;
+    this.wheelbase = config.wheelbase ?? 3.2;
+    this.kUndersteer = config.kUndersteer ?? 0.16;
+    this.kDamp = config.kDamp ?? 0.14;
+    this.maxSlew = config.maxSlew ?? 4.5;
+    this.deadbandLat = config.deadbandLat ?? 0.04;
+    this.deadbandHead = config.deadbandHead ?? 0.015;
+    this.steer = 0.0;
+  }
+  reset(steer = 0.0) {
+    this.steer = clamp(steer, -1.0, 1.0);
+  }
+  update(eLat, ePsi, kappa, v, omega) {
+    if (![eLat, ePsi, kappa, v, omega].every(Number.isFinite)) return this.steer;
+    v = Math.max(v, 0.0);
+    const wrappedHeading = wrapAngle(ePsi);
+    const kLat = this.kLatGain / Math.max(1.0, v * this.kLatSpeed);
+    const ff = kappa * (this.wheelbase + v * this.kUndersteer);
+
+    let effectiveKLat = kLat;
+    const isConverging = (eLat > 0 && wrappedHeading < -0.01) || (eLat < 0 && wrappedHeading > 0.01);
+    if (isConverging && Math.abs(eLat) < 0.45) {
+      effectiveKLat *= 0.65;
+    }
+
+    let raw = effectiveKLat * eLat - this.kHead * wrappedHeading + ff;
+    const excessYawRate = omega - v * kappa;
+    raw -= this.kDamp * excessYawRate;
+
+    if (Math.abs(eLat) < this.deadbandLat && Math.abs(wrappedHeading) < this.deadbandHead) {
+      const scale = Math.min(Math.abs(eLat) / this.deadbandLat, Math.abs(wrappedHeading) / this.deadbandHead);
+      raw *= (scale * scale);
+    }
+
+    const speedSlewFactor = clamp(1.0 - (v / 45.0) * 0.35, 0.65, 1.0);
+    const maxStep = this.maxSlew * speedSlewFactor * this.dt;
+    const cmd = clamp(raw, -1.0, 1.0);
+    this.steer = clamp(this.steer + clamp(cmd - this.steer, -maxStep, maxStep), -1.0, 1.0);
+    return this.steer;
   }
 }
 
@@ -2650,9 +2791,10 @@ const idmFollower = new IDMController();
 const curveGov = new CurvatureGovernor();
 const stopDistModel = new StoppingDistanceModel();
 const alcMachine = new LaneChangeStateMachine();
+const lkaController = new LaneKeepController();
 const alc = { reqDir: 0 };
 function alcRequest(dir) { alc.reqDir = dir; }
-function resetALC() { alc.reqDir = 0; alcMachine.reset(); longPID.reset(); }
+function resetALC() { alc.reqDir = 0; alcMachine.reset(); longPID.reset(); lkaController.reset(); }
 
 function computePolicy(dt, proj) {
   const u = Math.max(dyn.u, 0.001);
@@ -2667,35 +2809,28 @@ function computePolicy(dt, proj) {
   const lanesF = T.def ? T.def.lanesF : 2;
   const curLaneCenter = T.laneLat ? T.laneLat('fwd', curLane) : egoLat;
 
-  // 1. Target Lane & Auto-Pass Decision
+  // 1. Proactive Curvature Lookahead Profile
+  let safeSpeed = player.cruise;
+  let lookaheadK = proj.kappa || 0;
+  let upcomingCurvature = 0;
+
+  if (adas.gov) {
+    const gov = curveGov.evaluate(T, egoS, u, player.cruise);
+    if (gov.safeSpeed < safeSpeed) {
+      safeSpeed = gov.safeSpeed;
+      out.govActive = gov.governorActive;
+      if (out.govActive && !out.alert) out.alert = 'CURVE GOVERNOR — SLOWING FOR TURN';
+    }
+    lookaheadK = Math.max(Math.abs(proj.kappa || 0), gov.lookaheadK);
+    upcomingCurvature = gov.upcomingCurvature;
+  }
+
+  // 2. Intelligent Lane Selection & Smooth State Machine
   let targetLat = egoLat;
-  let autoLaneReq = alc.reqDir;
-
-  let leadInCurrentLane = null;
-  let leadInCurrentDist = Infinity;
-  for (const obj of perceived) {
-    if ((obj.vAlong ?? obj.v ?? 0) < -0.5) continue;
-    if (Math.abs(obj.lat - curLaneCenter) > 2.0) continue;
-    const d = T.wrapS ? T.wrapS(obj.s - egoS) : (obj.s - egoS);
-    if (d > 1.0 && d < leadInCurrentDist) {
-      leadInCurrentDist = d;
-      leadInCurrentLane = obj;
-    }
-  }
-
-  if (adas.alc && adas.autoPass && autoLaneReq === 0 && leadInCurrentLane && leadInCurrentDist < 65.0) {
-    const leadSpeed = leadInCurrentLane.vAlong ?? leadInCurrentLane.v ?? 0;
-    if (leadSpeed < player.cruise - 2.5) {
-      if (curLane > 0 && alcMachine.isLaneSafe(curLane - 1, perceived, egoS, egoLat, u, T)) {
-        autoLaneReq = -1;
-      } else if (curLane + 1 < lanesF && alcMachine.isLaneSafe(curLane + 1, perceived, egoS, egoLat, u, T)) {
-        autoLaneReq = 1;
-      }
-    }
-  }
-
   if (adas.alc) {
-    const lc = alcMachine.update(dt, autoLaneReq, egoLat, egoS, u, lanesF, perceived, T);
+    const lc = alcMachine.update(
+      dt, alc.reqDir, egoLat, egoS, u, player.cruise, lanesF, perceived, T, upcomingCurvature
+    );
     alc.reqDir = 0;
     targetLat = lc.targetLateral;
     out.alcActive = lc.active;
@@ -2706,22 +2841,7 @@ function computePolicy(dt, proj) {
     targetLat = curLaneCenter;
   }
 
-  // 2. Unified Hierarchical Safe-Speed Governor
-  let safeSpeed = player.cruise;
-  let lookaheadK = proj.kappa || 0;
-
-  // A. Curvature Governor (smooth pre-curve deceleration)
-  if (adas.gov) {
-    const gov = curveGov.evaluate(T, egoS, u, player.cruise);
-    if (gov.safeSpeed < safeSpeed) {
-      safeSpeed = gov.safeSpeed;
-      out.govActive = gov.governorActive;
-      if (out.govActive && !out.alert) out.alert = 'CURVE GOVERNOR — SLOWING FOR TURN';
-    }
-    lookaheadK = Math.max(Math.abs(proj.kappa || 0), gov.lookaheadK);
-  }
-
-  // B. Signal Stop (I2V / SPAT)
+  // 3. Signal Stop (I2V / SPAT)
   if (SENS.signal && SENS.signal.state !== 'green') {
     const d = SENS.signal.dist;
     const vStop = Math.sqrt(Math.max(0, 2 * 2.6 * (d - 2.5)));
@@ -2733,11 +2853,11 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // C. Lead Vehicle Following & Predictive Stopping Distance
+  // 4. Lead Vehicle Following & Predictive Stopping Distance
   let lead = null, minLeadDist = 1e9, minLeadTTC = 1e9, minLeadClosingV = 0;
   for (const p of perceived) {
     if ((p.vAlong ?? p.v ?? 0) < -0.5) continue;
-    if (Math.abs(p.lat - targetLat) > 2.2) continue;
+    if (Math.abs(p.lat - targetLat) > 2.0) continue;
     const g = T.wrapS ? T.wrapS(p.s - egoS) : (p.s - egoS);
     if (g > 0.5 && g < minLeadDist) {
       minLeadDist = g;
@@ -2781,7 +2901,7 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // 3. Side Blind Spot Protection
+  // 5. Side Blind Spot Protection
   const prox = SENS.proximity;
   if (prox && adas.aeb) {
     if (prox.left < 2.2 && out.steer > 0.05) {
@@ -2794,21 +2914,17 @@ function computePolicy(dt, proj) {
     }
   }
 
-  // 4. Longitudinal Controller (Anti-Windup PID)
+  // 6. Longitudinal PID Controller
   const pid = longPID.update(u, safeSpeed, dt, forceBrake);
   out.throttle = pid.throttle;
   out.brake = pid.brake;
   out.vt = safeSpeed;
 
-  // 5. Curvature-Lookahead Stanley Steering
+  // 7. Post-Curve Stabilized Stanley Path Follower (Zero Post-Turn Zigzag)
   if (!out.evasive && (adas.lka || out.alcActive)) {
     const latErr = egoLat - targetLat;
     const headingErr = wrapAngle(dyn.psi - proj.psi);
-    const kLat = 0.38 / Math.max(1.0, u * 0.05);
-    const kHead = 0.68;
-    const kCurv = (lookaheadK || 0) * (3.4 + u * 0.16);
-    const steerCmd = clamp(kLat * latErr - kHead * headingErr + kCurv, -1.0, 1.0);
-    out.steer = steerCmd;
+    out.steer = lkaController.update(latErr, headingErr, lookaheadK, u, dyn.om);
     out.lkaActive = !out.alcActive && Math.abs(latErr) > 0.015;
   }
 
