@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>V2V · Scenario Lab — Physics Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #04060c; }
+  body { font-family: 'IBM Plex Mono', monospace; user-select: none; animation: fadein 1s ease-out; }
+  @keyframes fadein { from { opacity: 0; } }
+  canvas { display: block; }
+  #vignette { position: fixed; inset: 0; z-index: 5; pointer-events: none;
+    background: radial-gradient(ellipse 130% 100% at 50% 42%, transparent 52%, rgba(2,4,10,0.62) 100%); }
+
+  #hud { position: fixed; top: 24px; left: 28px; z-index: 10; pointer-events: none; color: #cfe0f2; }
+  #hud h1 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 4px; color: #e8f2fc; }
+  #hud .rule { width: 44px; height: 2px; background: #ffb454; margin: 7px 0 8px; }
+  #hud .sub { font-size: 10px; letter-spacing: 2px; color: rgba(150,178,204,0.7); margin-bottom: 10px; }
+  #tele { font-size: 11px; letter-spacing: 1px; color: rgba(207,224,242,0.9); max-width: 470px; min-height: 15px; }
+  #tele.warn { color: #ff9a4a; }
+  #keys { margin-top: 8px; font-size: 9px; letter-spacing: 1.4px; color: rgba(150,178,204,0.45); max-width: 500px; line-height: 1.7; }
+
+  /* physics instrument strip */
+  #cluster { display: flex; align-items: center; gap: 14px; margin-top: 12px; width: 330px; flex-wrap: wrap; }
+  #spd { font-family: 'Space Grotesk'; font-weight: 700; font-size: 30px; color: #e8f2fc; line-height: 1; }
+  .unit { font-size: 8px; letter-spacing: 1.5px; color: rgba(150,178,204,0.6); margin-left: 3px; }
+  #gearbox { font-family: 'Space Grotesk'; font-weight: 700; font-size: 20px; color: #6effcd; }
+  #rpmWrap { width: 130px; height: 6px; background: rgba(20,30,45,0.9); border-radius: 3px; overflow: hidden; }
+  #rpmBar { height: 100%; width: 0%; background: #6effcd; }
+  #rpmBar.red { background: #ff5340; }
+  #tells { display: flex; gap: 7px; }
+  #tells span { font-size: 9px; letter-spacing: 1px; padding: 2px 6px; border: 1px solid rgba(130,190,235,0.22);
+    border-radius: 3px; color: rgba(110,130,150,0.5); }
+  #tells span.lit { color: #ffb454; border-color: rgba(255,180,84,0.6); }
+  #tells span.lit.red { color: #ff5340; border-color: rgba(255,83,64,0.7); }
+  #gbox { position: relative; width: 58px; height: 58px; border: 1px solid rgba(130,190,235,0.28); border-radius: 6px; }
+  #gbox::before, #gbox::after { content: ''; position: absolute; background: rgba(130,190,235,0.18); }
+  #gbox::before { left: 50%; top: 6px; bottom: 6px; width: 1px; }
+  #gbox::after { top: 50%; left: 6px; right: 6px; height: 1px; }
+  #gdot { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
+    border-radius: 50%; background: #ffb454; }
+
+  #toast { position: fixed; bottom: 40px; left: 50%; z-index: 40; pointer-events: none;
+    transform: translate(-50%, 10px); opacity: 0; transition: opacity .25s, transform .25s;
+    font-size: 11px; letter-spacing: 1.5px; color: #ffd9a0; background: rgba(10,14,24,0.78);
+    border: 1px solid rgba(255,180,105,0.3); padding: 7px 16px; border-radius: 4px; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  #alert { position: fixed; top: 22px; left: 50%; transform: translateX(-50%); z-index: 15; display: none;
+    font-size: 12px; letter-spacing: 3px; padding: 7px 18px; border: 1px solid; background: rgba(8,10,16,.82); }
+  #alert.on { display: block; }
+  #alert.amber { color: #ffb454; border-color: rgba(255,180,84,.5); }
+  #alert.red { color: #ff5340; border-color: rgba(255,83,64,.6); animation: blink .55s step-end infinite; }
+  @keyframes blink { 50% { opacity: .5; } }
+
+  #console { position: fixed; top: 24px; right: 24px; z-index: 12; width: 276px;
+    background: rgba(6,10,19,.86); border: 1px solid rgba(130,190,235,.26); border-radius: 8px;
+    max-height: calc(100vh - 48px); overflow-y: auto; }
+  #console::-webkit-scrollbar { width: 6px; }
+  #console::-webkit-scrollbar-thumb { background: rgba(130,190,235,.25); border-radius: 3px; }
+  .chead { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px;
+    border-bottom: 1px solid rgba(130,190,235,.2); font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px; letter-spacing: 3px; color: #cfe0f2; position: sticky; top: 0; background: rgba(6,10,19,.96); z-index: 2; }
+  .chead button { background: none; border: 1px solid rgba(130,190,235,.3); color: #9fb8cf;
+    font: 500 11px 'IBM Plex Mono'; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; }
+  #console.collapsed .sec { display: none; }
+  .sec { padding: 10px 12px; border-bottom: 1px solid rgba(130,190,235,.12); }
+  .sec:last-child { border-bottom: none; }
+  .sec > label { display: flex; justify-content: space-between; align-items: center;
+    font-size: 9px; letter-spacing: 2.5px; color: rgba(150,178,204,.65); margin-bottom: 8px; }
+  .crow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px;
+    font-size: 10px; letter-spacing: 1px; color: #cfe0f2; }
+  .stp { display: flex; align-items: center; gap: 6px; }
+  .stp button { width: 20px; height: 20px; background: rgba(12,18,30,.9); color: #9fb8cf;
+    border: 1px solid rgba(130,190,235,.3); border-radius: 4px; cursor: pointer; font: 500 11px 'IBM Plex Mono'; }
+  .stp .val { min-width: 16px; text-align: center; color: #ffb454; }
+  .seg { display: flex; gap: 6px; margin-bottom: 4px; }
+  .btn { background: rgba(12,18,30,.9); color: #9fb8cf; border: 1px solid rgba(130,190,235,.3);
+    font: 500 10px 'IBM Plex Mono'; letter-spacing: 1.5px; padding: 6px 6px; border-radius: 4px; cursor: pointer; }
+  .btn:hover { border-color: rgba(190,225,255,.7); color: #dff0ff; }
+  .seg .btn { flex: 1; }
+  .seg .btn.on { background: #ffb454; color: #171208; border-color: #ffb454; }
+  .tgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .tgrid .btn { text-align: center; }
+  .brow { display: flex; gap: 6px; margin-top: 4px; }
+  .brow .btn { flex: 1; }
+  select { background: rgba(12,18,30,.9); color: #cfe0f2; border: 1px solid rgba(130,190,235,.3);
+    border-radius: 3px; font: 10px 'IBM Plex Mono'; padding: 3px 2px; cursor: pointer; }
+  input[type=range] { accent-color: #ffb454; width: 100%; cursor: pointer; }
+  .hint { font-size: 9px; color: rgba(150,178,204,.55); margin-top: 6px; line-height: 1.5; letter-spacing: .5px; }
+  .vrow { border: 1px solid rgba(130,190,235,.18); border-radius: 5px; padding: 6px; margin-bottom: 6px; }
+  .vrow .l1 { display: flex; gap: 4px; align-items: center; }
+  .vrow .l2 { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
+  .vname { flex: 1; font-size: 10px; letter-spacing: 1px; color: #ffb454; }
+  .vrow.onc .vname { color: #aebfd0; }
+  .vkmh { font-size: 9px; color: rgba(150,178,204,.8); min-width: 44px; text-align: right; }
+  .vdel { background: none; border: none; color: rgba(255,83,64,.7); cursor: pointer;
+    font: 500 12px 'IBM Plex Mono'; padding: 0 3px; }
+  .vdel:hover { color: #ff5340; }
+  #addVeh { font-size: 9px; padding: 3px 8px; }
+  #vlist:empty::after { content: 'NO VEHICLES — ADD ONE'; font-size: 9px; letter-spacing: 1px; color: rgba(150,178,204,.35); }
+
+  #mapWrap { position: fixed; right: 20px; bottom: 20px; width: 240px; height: 240px; z-index: 10;
+    pointer-events: none; background: rgba(6,10,20,0.30);
+    border: 1px solid rgba(130,190,235,0.32); border-radius: 10px;
+    box-shadow: inset 0 0 30px rgba(10,30,60,0.5), 0 6px 30px rgba(0,0,0,0.55); }
+  #mapWrap::before { content: ''; position: absolute; top: -1px; left: -1px; width: 20px; height: 20px;
+    border-top: 2px solid rgba(190,225,255,0.75); border-left: 2px solid rgba(190,225,255,0.75);
+    border-top-left-radius: 10px; }
+  #mapWrap::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 20px; height: 20px;
+    border-bottom: 2px solid rgba(190,225,255,0.75); border-right: 2px solid rgba(190,225,255,0.75);
+    border-bottom-right-radius: 10px; }
+  #mapN { position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; letter-spacing: 2px; color: rgba(180,215,240,0.8); }
+  #mapCap { position: absolute; bottom: 6px; left: 9px; font-size: 8px; letter-spacing: 1.5px;
+    color: rgba(150,178,204,0.5); }
+  #mapTick { position: absolute; left: calc(50% - 7px); top: -4px; width: 14px; height: 11px;
+    background: #ffb454; clip-path: polygon(50% 100%, 0 0, 100% 0); transform-origin: 7px 124px; }
+
+  #editor { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+    background: rgba(3,5,10,.62); }
+  .edCard { background: rgba(7,11,20,.95); border: 1px solid rgba(130,190,235,.3); border-radius: 10px;
+    padding: 12px; max-width: min(94vw, 780px); }
+  .edHead { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .edHead b { font-family: 'Space Grotesk', sans-serif; font-size: 13px; letter-spacing: 3px; color: #cfe0f2; }
+  .edHead span { flex: 1; font-size: 9px; letter-spacing: 1px; color: rgba(150,178,204,.6); line-height: 1.5; }
+  #edCanvas { display: block; width: min(92vw, 720px); height: auto; background: rgba(4,7,13,.9);
+    border: 1px solid rgba(130,190,235,.22); border-radius: 6px; cursor: crosshair; touch-action: none; }
+
+  #crash { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+    flex-direction: column; background: rgba(6,3,4,.55); }
+  #crash h2 { font-family: 'Space Grotesk', sans-serif; font-size: 42px; letter-spacing: 12px; color: #ff5340; }
+  #crash .rule2 { width: 90px; height: 2px; background: #ff5340; margin: 14px 0; }
+  #crashInfo { font-size: 11px; letter-spacing: 1.5px; color: #e8c8c2; margin-bottom: 24px; text-align: center; }
+  #flash { position: fixed; inset: 0; z-index: 25; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(255,30,10,0.4) 100%); transition: opacity .3s; }
+  #flash.on { opacity: 1; animation: crashpulse 1.6s ease-in-out infinite; }
+  @keyframes crashpulse { 50% { opacity: .45; } }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="vignette"></div>
+<header id="hud">
+  <h1>V2V · SCENARIO LAB</h1>
+  <div class="rule"></div>
+  <div class="sub">PHYSICS SANDBOX · CUSTOM TRACKS · V2V DEMOS</div>
+  <div id="tele">—</div>
+  <div id="cluster">
+    <div><span id="spd">0</span><span class="unit">KM/H</span></div>
+    <div><span id="gearbox">N</span><span class="unit">GEAR</span></div>
+    <div><div id="rpmWrap"><div id="rpmBar"></div></div></div>
+    <div id="tells"><span id="tEsc">ESC</span><span id="tAbs">ABS</span><span id="tTc">TC</span><span id="tV2v">V2V</span></div>
+    <div id="gbox"><div id="gdot"></div></div>
+  </div>
+  <div id="keys">[W/S] THROTTLE · BRAKE (HOLD S AT STOP = REVERSE) · [A/D] STEER · [SPACE] HANDBRAKE ·
+    [C] COCKPIT/CHASE · [V] V2V · [E] EDITOR · [R] RESET · [M] SOUND</div>
+</header>
+<div id="alert"></div>
+
+<div id="console">
+  <div class="chead">MISSION CONSOLE <button id="conToggle">–</button></div>
+  <div class="sec">
+    <label>DRIVE MODE</label>
+    <div class="seg">
+      <button id="mManual" class="btn on">FULLY MANUAL</button>
+      <button id="mV2v" class="btn">V2V ASSIST</button>
+    </div>
+    <div class="hint" id="modeHint">NO LINK — RAW PHYSICS, EYES ONLY</div>
+  </div>
+  <div class="sec">
+    <label>DRIVING AIDS <span style="letter-spacing:.5px;color:rgba(255,180,84,.6)">OFF = FULLY RAW</span></label>
+    <div class="tgrid">
+      <button id="tAbsB" class="btn on">ABS</button>
+      <button id="tTcB" class="btn on">TRACTION</button>
+      <button id="tEscB" class="btn on">ESC</button>
+      <button id="tSndB" class="btn on">SOUND</button>
+    </div>
+    <div class="hint">ABS OFF = LOCKED WHEELS (NO STEERING) · TC OFF = WHEELSPIN DRIFT ·
+      ESC OFF = SPINS · ALL OFF = 100% RAW MANUAL</div>
+  </div>
+  <div class="sec">
+    <label>TRACK</label>
+    <div class="crow"><span>FORWARD LANES</span>
+      <span class="stp"><button id="lfMinus">–</button><span class="val" id="lfVal">2</span><button id="lfPlus">+</button></span></div>
+    <div class="crow"><span>ONCOMING LANES</span>
+      <span class="stp"><button id="loMinus">–</button><span class="val" id="loVal">2</span><button id="loPlus">+</button></span></div>
+    <div class="crow"><span>BLIND BARRIER</span>
+      <select id="barrierSel">
+        <option value="inside">INSIDE CURVE</option>
+        <option value="outside">OUTSIDE CURVE</option>
+        <option value="off">OFF</option>
+      </select></div>
+    <div class="crow"><span>FOG</span><span style="flex:1;margin-left:8px"><input type="range" id="fogRange" min="0.004" max="0.09" step="0.001" value="0.02"></span></div>
+    <div class="brow"><button class="btn" id="btnEdit">EDIT TRACK · E</button><button class="btn" id="btnDefault">DEFAULT</button></div>
+  </div>
+  <div class="sec">
+    <label>VEHICLES <button class="btn" id="addVeh">+ ADD</button></label>
+    <div id="vlist"></div>
+  </div>
+  <div class="sec">
+    <div class="brow"><button class="btn" id="btnReset">RESET RUN · R</button></div>
+    <div class="brow"><button class="btn" id="btnSave">SAVE</button><button class="btn" id="btnLoad">LOAD</button></div>
+  </div>
+</div>
+
+<div id="mapWrap">
+  <div id="mapN">N</div>
+  <div id="mapCap">RADAR · 100 M</div>
+  <div id="mapTick"></div>
+</div>
+
+<div id="editor">
+  <div class="edCard">
+    <div class="edHead">
+      <b>TRACK EDITOR</b>
+      <span>DRAG POINTS (MIN 18 M APART) · CLICK EMPTY SPACE TO INSERT · RIGHT-CLICK / ALT-CLICK TO DELETE ·
+        DRAG THE CYAN CHEVRON TO SET EGO SPAWN · DRAG VEHICLE MARKERS ALONG THE ROAD</span>
+      <button class="btn" id="edClose">APPLY · CLOSE</button>
+    </div>
+    <canvas id="edCanvas"></canvas>
+  </div>
+</div>
+
+<div id="crash">
+  <h2>COLLISION</h2>
+  <div class="rule2"></div>
+  <div id="crashInfo"></div>
+  <button class="btn" id="crashReset">RESET RUN — R</button>
+</div>
+<div id="flash"></div>
+<div id="toast"></div>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
