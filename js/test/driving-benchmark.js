@@ -378,10 +378,10 @@ export function runAllBenchmarks() {
     leadVehicles: [{ s: 50, lat: 0.0, u: 12.0, src: 'local' }]
   }));
 
-  // 13. High-speed Highway Driving with 60 km/h Hard Limit (Requested 30 m/s -> Capped at 16.67 m/s)
-  results.push(runScenario('13. 60 km/h Hard Speed Ceiling', {
+  // 13. High-speed Highway Driving with 80 km/h Hard Limit (Requested 30 m/s -> Capped at 22.22 m/s)
+  results.push(runScenario('13. 80 km/h Hard Speed Ceiling', {
     duration: 10.0,
-    initialSpeed: 14.0,
+    initialSpeed: 18.0,
     cruiseSpeed: 30.0,
     track: new SimpleTrack(3000, 2, [{ sStart: 100, sEnd: 600, kappa: 1.0 / 400 }])
   }));

@@ -20,8 +20,8 @@ import { makeAEBShield } from './aeb.js';
 
 const GRAV = 9.81;
 
-/** Absolute Hard Speed Ceiling: 60 km/h */
-export const MAX_AUTONOMOUS_SPEED = 60.0 / 3.6; // 16.6667 m/s
+/** Absolute Hard Speed Ceiling: 80 km/h */
+export const MAX_AUTONOMOUS_SPEED = 80.0 / 3.6; // 22.2222 m/s (80 km/h)
 
 /**
  * ─── 1. PREDICTIVE COLLISION & CLOSING VELOCITY CALCULATOR ───
@@ -715,7 +715,15 @@ export class AutonomousDrivingStack {
     // ── 8. Post-Curve Stabilized Stanley Path Follower (Zero Post-Turn Zigzag) ──
     const eLat = egoLat - targetLat;
     const ePsi = wrapAngle(egoPsi - roadPsi);
-    const steerCmd = this.lka.update(eLat, ePsi, lookaheadK, u, omega, egoState.w ?? egoState.vLat ?? 0);
+    const previewDist = Math.max(8.0, u * 0.8);
+    const sampleSteps = 5;
+    let kappaSum = 0;
+    for (let i = 0; i < sampleSteps; i++) {
+      const sSample = egoS + (i / (sampleSteps - 1)) * previewDist;
+      kappaSum += track.kappaAt ? track.kappaAt(sSample) : kappa;
+    }
+    const kappaPreview = kappaSum / sampleSteps;
+    const steerCmd = this.lka.update(eLat, ePsi, kappaPreview, u, omega);
 
     // ── 9. Deterministic 360° Safety Shield (Blind Spot Protection) ──
     const candidateCtrl = {
