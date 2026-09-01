@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { gaugeTex } from './env.js';
+import { gaugeTex, glareTex } from './env.js';
 
-/* shared materials */
 export const glassMat = new THREE.MeshStandardMaterial({ color: 0x0a1420, metalness: 0.9, roughness: 0.07, transparent: true, opacity: 0.55 });
 export const tireMat = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.95 });
 export const rimMat = new THREE.MeshStandardMaterial({ color: 0xb7bdc6, metalness: 0.9, roughness: 0.25 });
@@ -10,8 +9,8 @@ export const egoHeadMat = new THREE.MeshStandardMaterial({ color: 0x1c2126, emis
 export const aiHeadMat = new THREE.MeshStandardMaterial({ color: 0x1c2126, emissive: 0xffeecf, emissiveIntensity: 5 });
 export const egoTailMat = new THREE.MeshStandardMaterial({ color: 0x2a0508, emissive: 0xff0d05, emissiveIntensity: 0.9 });
 export const tailBase = new THREE.MeshStandardMaterial({ color: 0x2a0508, emissive: 0xff1600, emissiveIntensity: 1.1 });
-export const onGlareMat = new THREE.SpriteMaterial({ map: null, color: 0xfff3d9, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
-export const brakeGlowMat = new THREE.SpriteMaterial({ map: null, color: 0xff3018, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+export const onGlareMat = new THREE.SpriteMaterial({ map: glareTex, color: 0xfff3d9, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+export const brakeGlowMat = new THREE.SpriteMaterial({ map: glareTex, color: 0xff3018, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
 export const beamMat = new THREE.MeshBasicMaterial({ color: 0xbcd0ff, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide });
 const tireGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.24, 16).rotateZ(Math.PI / 2);
 const rimGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.26, 8).rotateZ(Math.PI / 2);
@@ -65,8 +64,7 @@ function extrudeProfile(shape, width, bevel) {
   return g;
 }
 
-/* structure: root (yaw, world) → body (roll/pitch suspension) + wheels (flat).
-   Front wheels steer (group.rotation.y); tire+rim spin (rotation.x). */
+/* root (world yaw) → body (roll/pitch) + wheels (steer group + spin group) */
 export function buildCar({ body, cabin, paint, metalness = 0.85, roughness = 0.2, wheelZ = [-1.46, 1.46] }) {
   const root = new THREE.Group();
   const bodyG = new THREE.Group();
@@ -101,7 +99,6 @@ export function headingMarker(colorHex, scale = 1) {
   return m;
 }
 
-/* ego car with cockpit */
 export function buildEgo() {
   const c = buildCar({ body: sedanBody(), cabin: sedanCabin(), paint: 0x151b24, metalness: 0.85, roughness: 0.2 });
   c.root.add(headingMarker(0x45e6ff));
@@ -165,7 +162,6 @@ export function buildEgo() {
   return { ...c, headSpots, beams };
 }
 
-/* AI car */
 export function buildAI({ hatch, paint, onc, bigLights }) {
   const c = buildCar({
     body: hatch ? hatchBody() : sedanBody(),

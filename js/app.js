@@ -1,19 +1,15 @@
 import * as THREE from 'three';
-import { renderer, scene, fog, moonLight, moonDir, glareTex, onGlareTexSrc } from './env.js';
-import {
-  trackDef, DEFAULT_POINTS, T, buildTrack, wrapS, roadMetrics,
-  updateLampLights, surfaceAt
-} from './track.js';
-import {
-  buildEgo, buildAI, disposeAI, egoTailMat, egoHeadMat
-} from './cars.js';
-import { VehicleSim, SkidTrail, Smoke, cacheSurf } from './physics.js';
+import { renderer, scene, fog, moonLight, moonDir } from './env.js';
+import { trackDef, DEFAULT_POINTS, T, buildTrack, wrapS, updateLampLights } from './track.js';
+import { buildEgo, buildAI, disposeAI, egoTailMat, egoHeadMat } from './cars.js';
+import { VehicleSim, SkidTrail, Smoke } from './physics.js';
 import { AudioFX } from './audio.js';
 import { initEditor, ed, openEditor, closeEditor, recomputeEd, computeEdView, redrawEditor } from './editor.js';
 
 const $ = id => document.getElementById(id);
 const MAP_PX = 240, MAP_MARG = 20;
 const clamp = THREE.MathUtils.clamp;
+const UP = new THREE.Vector3(0, 1, 0);
 
 /* ego + fx systems */
 const ego = buildEgo();
@@ -31,6 +27,7 @@ const fpsCam = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 10
 fpsCam.position.set(-0.35, 1.25, 0.2);
 ego.body.add(fpsCam);
 const chaseCam = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, 1000);
+chaseCam.position.set(0, 4, 10);
 let camMode = 'cockpit';
 const minimapCam = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 500);
 minimapCam.position.set(0, 120, 0);
@@ -55,7 +52,6 @@ function placeOnRail(car, s, lat, reversed) {
   car.position.set(FR.p.x + FR.r.x * lat, 0, FR.p.z + FR.r.z * lat);
   car.rotation.y = reversed ? Math.atan2(FR.t.x, FR.t.z) : Math.atan2(-FR.t.x, -FR.t.z);
 }
-const UP = new THREE.Vector3(0, 1, 0);
 
 function addAI(p = {}) {
   let dir = p.dir === 'onc' && trackDef.lanesO > 0 ? 'onc' : 'fwd';
@@ -66,7 +62,7 @@ function addAI(p = {}) {
   const ai = {
     id: ++aiSeq, name: p.name || 'CAR ' + (aiSeq + 1), dir,
     lane: p.lane || 0,
-    spawnU: p.spawnU ?? (((player.spawnU + 40 / T.L) % 1 + 1) % 1),
+    spawnU: p.spawnU ?? (((player.spawnU + 40 / T.L) % 1) + 1) % 1,
     speed: p.speed ?? 13, behavior: p.behavior || 'cruise',
     hatch: !!p.hatch, paint: p.paint ?? null,
     ...built,
@@ -100,11 +96,15 @@ function setAIBrake(ai, on) {
   ai.lights.forEach(l => l.intensity = on ? 30 : 3.4);
 }
 
-/* ---------- rebuild / respawn ---------- */
+/* ---------- rebuild / respawn (ego spawns IN ITS LANE — the fix that
+   made every V2V lateral check sane) ---------- */
 function respawnAll() {
-  const sp = T.curve.getPointAt(((player.spawnU % 1) + 1) % 1);
-  const st = T.curve.getTangentAt(((player.spawnU % 1) + 1) % 1);
-  sim.place(sp.x, sp.z, Math.atan2(-st.x, -st.z));
+  const u = ((player.spawnU % 1) + 1) % 1;
+  const sp = T.curve.getPointAt(u);
+  const st = T.curve.getTangentAt(u);
+  const r = new THREE.Vector3().crossVectors(st, UP).normalize();
+  const lat = T.laneLat('fwd', 0);                       // lane centre, not the centerline
+  sim.place(sp.x + r.x * lat, sp.z + r.z * lat, Math.atan2(-st.x, -st.z));
   for (const ai of scenario) {
     ai.s = ai.spawnU * T.L;
     ai.v = ai.behavior === 'stopped' ? 0 : ai.speed;
@@ -112,6 +112,7 @@ function respawnAll() {
     ai.lat = T.laneLat(ai.dir, ai.lane);
     placeOnRail(ai.root, ai.s, ai.lat, ai.dir === 'onc');
   }
+  chaseCam.position.set(sim.pos.x - sim.fw.x * 9, 3.6, sim.pos.z - sim.fw.z * 9);
 }
 function rebuild() {
   buildTrack(trackDef);
@@ -128,8 +129,15 @@ function rebuild() {
   if (ed.open) { recomputeEd(); computeEdView(); redrawEditor(); }
 }
 
-/* ---------- V2V assist (physics-level interventions) ---------- */
-const assist = { alert: null, sev: 'amber', target: 0, brake: 0, steer: 0 };
+/* ---------- V2V ASSIST — ACC / FCW / AEB / EVASIVE STEER ----------
+   Interventions are physics-level inputs (throttle/brake/steer), and
+   the BSM data propagates through the sound barrier, so occluded
+   brake events are warned even when invisible. Every state surfaces
+   on a telltale chip so you can SEE the system working. */
+const assist = {
+  alert: null, sev: 'amber', target: 0, brake: 0, steer: 0,
+  accActive: false, aeb: false, fcw: null, evasive: false, evT: 0
+};
 function occludedByBarrier(targetS) {
   const b = T.bar;
   if (!b) return false;
@@ -139,11 +147,16 @@ function occludedByBarrier(targetS) {
   for (let d = 4; d < g - 4; d += 5) if (T.inWin(sim.s + d)) m += 5;
   return m > 22;
 }
-function computeAssist() {
+function computeAssist(dt) {
   assist.target = player.cruise;
   assist.brake = 0;
   assist.steer = 0;
-  assist.alert = null; assist.sev = 'amber';
+  assist.accActive = false;
+  assist.fcw = null;
+  assist.sev = 'amber';
+  const wasAeb = assist.aeb;
+  assist.aeb = false;
+
   let lead = null, lg = 1e9;
   for (const ai of scenario) {
     if (ai.dir !== 'fwd') continue;
@@ -156,21 +169,28 @@ function computeAssist() {
     const ttc = closing > 0.4 ? lg / closing : 1e9;
     const headway = sim.vx * 1.5 + 9;
     const leadBraking = lead.braking || lead.forceT > 0 || lead.behavior === 'stopped';
-    if (lg < 12 || ttc < 1.4) {
+    if (lg < 12 || ttc < 1.6) {                            /* AEB — full stop */
+      assist.aeb = true;
       assist.target = 0; assist.brake = 1;
-      assist.alert = 'FCW · IMMINENT — FULL AUTO BRAKE'; assist.sev = 'red';
-    } else if (leadBraking && ttc < 6) {
-      assist.target = Math.max(0, lead.v - 2.5); assist.brake = 0.85;
-      assist.alert = occludedByBarrier(lead.s)
+      assist.fcw = 'AEB · AUTOMATIC EMERGENCY BRAKE';
+      assist.sev = 'red';
+    } else if (leadBraking && ttc < 6) {                   /* FCW */
+      assist.target = Math.max(0, lead.v - 2.5);
+      assist.brake = 0.8;
+      assist.fcw = occludedByBarrier(lead.s)
         ? 'FCW · OCCLUDED VEHICLE BRAKING — RADIO ALERT'
         : 'FCW · LEAD VEHICLE BRAKING';
-      assist.sev = 'amber';
-    } else if (lg < headway) {
-      assist.target = Math.max(0, lead.v); assist.brake = 0.45;
-      if (lg < headway * 0.65) assist.alert = 'ACC · CLOSING ON LEAD — ADJUSTING';
+    } else if (lg < headway) {                             /* ACC headway */
+      assist.target = Math.max(0, lead.v);
+      assist.brake = clamp((sim.vx - assist.target) / 5, 0, 0.5);
+      assist.accActive = true;
+      if (lg < headway * 0.65) assist.fcw = 'ACC · CLOSING ON LEAD — ADJUSTING';
     }
   }
-  if (trackDef.lanesO > 0 && sim.lat < 1.0) {
+
+  /* oncoming intrusion → evasive steer, with release hysteresis */
+  let threat = false;
+  if (trackDef.lanesO > 0 && sim.lat < 1.2) {
     let worst = 1e9;
     for (const ai of scenario) {
       if (ai.dir !== 'onc') continue;
@@ -179,16 +199,25 @@ function computeAssist() {
       if (Math.abs(T.laneLat('onc', ai.lane) - sim.lat) > 2.8) continue;
       worst = Math.min(worst, g / Math.max(sim.vx + ai.v, 2));
     }
-    if (worst < 3.5) {
-      assist.steer = 0.8;                         // steer right, away from the intrusion
-      assist.target = Math.min(assist.target, 7); assist.brake = 1;
-      assist.alert = 'DANGER · ONCOMING TRAFFIC — EVASIVE STEER ENGAGED';
-      assist.sev = 'red';
-    }
+    threat = worst < 3.5;
   }
+  if (threat) { assist.evasive = true; assist.evT = 0.8; }
+  else if (assist.evasive) {
+    assist.evT -= dt;
+    if (assist.evT <= 0) assist.evasive = false;
+  }
+  if (assist.evasive) {
+    assist.steer = 0.85;                                   // hard right, away from intrusion
+    assist.target = Math.min(assist.target, 7);
+    assist.brake = Math.max(assist.brake, 0.9);
+    assist.fcw = 'DANGER · ONCOMING TRAFFIC — EVASIVE STEER ENGAGED';
+    assist.sev = 'red';
+  }
+  assist.alert = assist.fcw;
+  if (assist.aeb && !wasAeb) toast('AEB — AUTOMATIC EMERGENCY BRAKE ENGAGED');
 }
 
-/* ---------- player physics driving ---------- */
+/* ---------- player driving ---------- */
 function driveInputs(dt) {
   const up = keys.KeyW || keys.ArrowUp;
   const dn = keys.KeyS || keys.ArrowDown;
@@ -199,14 +228,14 @@ function driveInputs(dt) {
     sim.inThrottle = up ? 1 : 0;
     sim.inBrake = dn ? 1 : 0;
     sim.inSteer = sIn;
-  } else {                                          // V2V: pedals become cruise commands
+  } else {                                          /* V2V: pedals command the cruise */
     if (up) player.cruise = Math.min(player.cruise + 8 * dt, 44);
     if (dn) player.cruise = Math.max(player.cruise - 12 * dt, 0);
-    computeAssist();
+    computeAssist(dt);
     const acc = clamp((assist.target - sim.vx) * 0.3, 0, 1);
-    sim.inThrottle = Math.max(0, acc) * (player.cruise > 0.5 ? 1 : 0);
+    sim.inThrottle = Math.max(0, acc);
     sim.inBrake = Math.max(assist.brake, clamp((sim.vx - assist.target) / 6, 0, 1));
-    sim.inSteer = clamp(sIn * 0.6 + assist.steer, -1, 1);
+    sim.inSteer = clamp(sIn * 0.55 + assist.steer, -1, 1);
   }
   sim.inHand = !!keys.Space;
 }
@@ -218,14 +247,14 @@ function applyEgoVisual(dt) {
   ego.body.rotation.z += (roll - ego.body.rotation.z) * Math.min(1, dt * 7);
   ego.body.rotation.x += (pitch - ego.body.rotation.x) * Math.min(1, dt * 7);
   for (const w of ego.wheels) {
-    if (w.front) w.group.rotation.y += (sim.steer - w.group.rotation.y) * Math.min(1, dt * 12);
-    w.spin.rotation.x -= (sim.vx / 0.32) * dt;
+    if (w.front) w.group.rotation.y += (-sim.steer - w.group.rotation.y) * Math.min(1, dt * 12);
+    w.spin.rotation.x -= (sim.wv / 0.32) * dt;       // wheels follow WHEEL speed (burnouts!)
   }
   egoTailMat.emissiveIntensity = sim.inBrake > 0.2 || (mode === 'v2v' && assist.brake > 0.3) ? 4.5 : 0.9;
 }
 
-/* ---------- AI update + knock response ---------- */
-const tmpF = new THREE.Vector3();
+/* ---------- AI update ---------- */
+const tmpF = new THREE.Vector3(), tmpW = new THREE.Vector3();
 function updateAI(dt) {
   for (const ai of scenario) {
     if (ai.forceT > 0) ai.forceT -= dt;
@@ -238,7 +267,7 @@ function updateAI(dt) {
     }
     let braking = ai.forceT > 0 || ai.braking || ai.behavior === 'stopped';
     let want = ai.behavior === 'stopped' ? 0 : braking ? Math.max(ai.speed * 0.22, 2.5) : ai.speed;
-    if (ai.dir === 'fwd') {                        // follow lead vehicles AND the player
+    if (ai.dir === 'fwd') {
       let g = 1e9, lv = 0;
       const myLat = T.laneLat('fwd', ai.lane);
       for (const o of scenario) {
@@ -252,11 +281,10 @@ function updateAI(dt) {
       }
       if (g < 15) want = Math.min(want, lv * Math.max(0, (g - 5.5) / 9.5));
     }
-    if (Math.abs(ai.yawOff) > 0.4) want = Math.min(want, 3);   // recovering from a knock
+    if (Math.abs(ai.yawOff) > 0.4) want = Math.min(want, 3);
     const rate = want < ai.v ? 6.5 : 2.2;
     ai.v = Math.max(0, ai.v + clamp(want - ai.v, -rate * dt, rate * dt));
     ai.s = ai.dir === 'fwd' ? (ai.s + ai.v * dt) % T.L : (ai.s - ai.v * dt + T.L) % T.L;
-    /* knock dynamics */
     ai.lat += ai.latV * dt;
     ai.latV *= Math.max(0, 1 - 2.2 * dt);
     ai.yawOff += ai.yawV * dt;
@@ -268,7 +296,6 @@ function updateAI(dt) {
     for (const w of ai.wheels) w.spin.rotation.x -= (ai.dir === 'fwd' ? ai.v : -ai.v) / 0.32 * dt;
     if (ai.behavior === 'stopped') { ai.blink += dt; braking = (ai.blink % 1.4) < 0.7; }
     setAIBrake(ai, braking || ai.v < ai.speed - 1.5);
-    /* AI skids on hard braking */
     if (ai.v < ai.speed - 3 && ai.dir === 'fwd' && ai.v > 2) {
       const cs = Math.cos(ai.root.rotation.y), sn = Math.sin(ai.root.rotation.y);
       for (const lz of [1.46]) for (const lx of [-0.8, 0.8]) {
@@ -279,8 +306,7 @@ function updateAI(dt) {
   }
 }
 
-/* ---------- collisions: car ↔ car (impulse + knock) ---------- */
-const tmpW = new THREE.Vector3();
+/* ---------- car ↔ car collisions ---------- */
 function aiWorldFwd(ai) { return tmpW.set(0, 0, -1).applyQuaternion(ai.root.quaternion); }
 function carCircles(pos, fwd) {
   return [
@@ -303,17 +329,15 @@ function carCollisions() {
       const overlap = 2.25 - d;
       sim.pos.x += nx * overlap * 0.5;
       sim.pos.z += nz * overlap * 0.5;
-      /* relative velocity along the normal */
       const pvx = sim.vx * fw.x + sim.vy * sim.rt.x, pvz = sim.vx * fw.z + sim.vy * sim.rt.z;
       const avx = af.x * ai.v * (ai.dir === 'fwd' ? 1 : -1), avz = af.z * ai.v * (ai.dir === 'fwd' ? 1 : -1);
       const rvn = (pvx - avx) * nx + (pvz - avz) * nz;
       if (rvn < 0) {
-        const j = -rvn * 1.3;                      // impulse magnitude (m/s equivalent)
+        const j = -rvn * 1.3;
         const wvx = pvx - nx * j, wvz = pvz - nz * j;
         sim.vx = wvx * fw.x + wvz * fw.z;
         sim.vy = wvx * sim.rt.x + wvz * sim.rt.z;
         sim.omega += j * 0.25 * Math.sign(nx * fw.z - nz * fw.x);
-        /* knock the AI sideways + spin */
         ai.latV += (nx * -af.x + nz * -af.z) * j * 0.9;
         ai.yawV += j * 0.3 * (Math.random() > 0.5 ? 1 : -1);
         ai.v = Math.max(0, ai.v - j * 0.5);
@@ -350,20 +374,22 @@ function resetRun() {
   toast('RUN RESET — SCENARIO RESTARTED');
 }
 
-/* ---------- skids & smoke from the player ---------- */
-let smokeAcc = 0;
+/* ---------- player skids & smoke ---------- */
 function playerFX(dt) {
   const contacts = sim.wheelContacts();
   let maxSlip = 0;
   contacts.forEach((c, i) => {
     const front = c.front;
+    /* rear marks/smoke key on REAL slip: locked, or wheelspin past 2.2 m/s
+       (below that it's just a firm launch, not a burnout) */
     const slip = front
-      ? (sim.lockF ? 1 : clamp((sim.slipF - 0.13) * 4, 0, 1))
-      : (sim.lockR ? 1 : sim.spin > 0.25 ? 1 : clamp((sim.slipR - 0.13) * 4, 0, 1));
+      ? (sim.lockF ? 1 : clamp((sim.slipF - 0.14) * 4, 0, 1))
+      : (sim.lockR ? 1 : sim.spin > 2.2 ? 1 : clamp((sim.slipR - 0.14) * 4, 0, 1));
     maxSlip = Math.max(maxSlip, slip);
     const onAsphalt = Math.abs(sim.lat) < T.pavedHalf + 0.4 && sim.vAbs > 2;
-    skids.wheel('p' + i, c.x, c.y + sim.groundY * 0 + 0.01, c.z, slip > 0.05 && onAsphalt, 0.4 + slip * 0.6);
-    if (slip > 0.3 && onAsphalt && Math.random() < slip * 0.5) smoke.spawn(c.x, c.y + 0.1, c.z, 0.7 + slip * 0.6);
+    skids.wheel('p' + i, c.x, c.y + 0.01, c.z, slip > 0.05 && onAsphalt, 0.4 + slip * 0.6);
+    const hot = front ? (sim.lockF || sim.slipF > 0.18) : (sim.lockR || sim.spin > 2.4);
+    if (slip > 0.3 && hot && onAsphalt && Math.random() < slip * 0.6) smoke.spawn(c.x, c.y + 0.1, c.z, 0.7 + slip * 0.6);
   });
   if (sim.scrape > 0) {
     sim.scrape -= dt;
@@ -372,7 +398,7 @@ function playerFX(dt) {
       maxSlip = Math.max(maxSlip, 0.7);
     }
   }
-  sim.impact = 0;                                   // consumed per frame
+  sim.impact = 0;
   skids.update(dt);
   smoke.update(dt);
   audio.update(sim.rpm, sim.inThrottle, sim.vAbs, maxSlip);
@@ -380,7 +406,18 @@ function playerFX(dt) {
 
 /* ---------- HUD ---------- */
 const tele = $('tele'), mapTick = $('mapTick'), alertEl = $('alert');
-let toastTimer = 0, hudT = 0, alertTxt = '', lastStatus = '';
+/* extra telltale chips for the V2V interventions (created in JS so the
+   html doesn't need another edit) */
+{
+  const tells = $('tells');
+  [['tAcc', 'ACC'], ['tFcw', 'FCW'], ['tAeb', 'AEB']].forEach(([id, lab]) => {
+    const s = document.createElement('span');
+    s.id = id;
+    s.textContent = lab;
+    tells.appendChild(s);
+  });
+}
+let toastTimer = 0, hudT = 0, alertTxt = '', lastChirpT = 0;
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
@@ -401,9 +438,15 @@ function updateHUD() {
   $('tAbs').classList.toggle('lit', sim.absActive);
   $('tTc').classList.toggle('lit', sim.tcActive);
   $('tV2v').classList.toggle('lit', mode === 'v2v');
+  $('tAcc').classList.toggle('lit', mode === 'v2v' && assist.accActive);
+  $('tFcw').classList.toggle('lit', mode === 'v2v' && !!assist.fcw);
+  $('tFcw').classList.toggle('red', mode === 'v2v' && assist.sev === 'red');
+  $('tAeb').classList.toggle('lit', mode === 'v2v' && (assist.aeb || assist.evasive));
+  $('tAeb').classList.toggle('red', mode === 'v2v' && (assist.aeb || assist.evasive));
   let txt = (mode === 'v2v' ? `V2V LINK · ${scenario.length} BSM` : 'FULLY MANUAL · NO LINK') +
     (sim.off ? ' · OFF PAVEMENT' : '') +
-    (sim.lockF || sim.lockR ? ' · WHEEL LOCK' : '');
+    (sim.lockF || sim.lockR ? ' · WHEEL LOCK' : '') +
+    (sim.spin > 2.5 ? ' · WHEELSPIN' : '');
   let warn = sim.off;
   let lead = null, lg = 1e9;
   for (const ai of scenario) {
@@ -427,6 +470,11 @@ function updateAlertDOM() {
     alertTxt = t;
     alertEl.textContent = t;
     alertEl.className = t ? 'on ' + assist.sev : '';
+    const now = performance.now();                        // audible FCW / AEB warning
+    if (t && now - lastChirpT > 1100) {
+      audio.chirp(assist.sev === 'red');
+      lastChirpT = now;
+    }
   }
 }
 
@@ -442,7 +490,7 @@ function updateCamera(dt, et) {
   const k = 1 - Math.exp(-dt * 3.2);
   yaw += ((driving ? 0 : -mx * 0.5) - yaw) * k;
   pitch += (-0.045 - (driving ? 0 : my * 0.16) - pitch) * k;
-  let vib = (sim.lockF || sim.lockR || sim.spin > 0.4) && sim.vAbs > 4 ? 0.012 : 0;
+  let vib = (sim.lockF || sim.lockR || sim.spin > 2) && sim.vAbs > 4 ? 0.012 : 0;
   if (sim.off && sim.vAbs > 1) vib += 0.02;
   let py = 1.25 + Math.sin(et * 8.5) * 0.006 * (sim.vAbs / 20) + (Math.random() - 0.5) * vib;
   if (shakeT > 0) {
@@ -452,7 +500,6 @@ function updateCamera(dt, et) {
   }
   fpsCam.rotation.set(pitch, yaw, -yaw * 0.05 - sim.latAcc * 0.03);
   fpsCam.position.set(-0.35, py, 0.2);
-  /* chase cam */
   const fw = sim.fw;
   const tx = sim.pos.x - fw.x * 8.2, tz = sim.pos.z - fw.z * 8.2;
   const ty = Math.max(sim.groundY + 3.1, chaseCam.position.y - 1);
@@ -470,9 +517,9 @@ function setMode(m, silent) {
   $('mV2v').classList.toggle('on', m === 'v2v');
   $('modeHint').textContent = m === 'manual'
     ? 'NO LINK — RAW PHYSICS, EYES ONLY'
-    : 'BSM LINK · ACC + FCW + EVASIVE STEER · W/S = SET CRUISE';
+    : 'BSM LINK · ACC + FCW + AEB + EVASIVE STEER · W/S = SET CRUISE';
   if (m === 'v2v' && sim.vAbs > 2) player.cruise = Math.max(8, sim.vx);
-  if (!silent) toast(m === 'manual' ? 'FULLY MANUAL — V2V + AIDS AS CONFIGURED' : 'V2V ASSIST ENGAGED');
+  if (!silent) toast(m === 'manual' ? 'FULLY MANUAL — V2V LINK OFF, AIDS AS CONFIGURED' : 'V2V ASSIST ENGAGED');
 }
 function setHeadlights(on) {
   headlightsOn = on;
@@ -669,7 +716,6 @@ function update(dt, et) {
       sim.step(FIXED);
       acc -= FIXED;
     }
-    cacheSurf({ tx: 1, tz: 0 });
     carCollisions();
     if (graceT > 0) graceT -= dt;
     updateAI(dt);
@@ -729,7 +775,8 @@ window.v2vScene = {
   setFogDensity, setHeadlights, setMode, resetRun, buildTrack: rebuild
 };
 
-setTimeout(() => toast('FULLY MANUAL — W/A/S/D + SPACE HANDBRAKE · TRY A FAST TURN'), 900);
-setTimeout(() => toast('TURN ESC OFF FOR REAL SKIDS · PRESS C FOR THE CHASE CAMERA'), 4200);
-setTimeout(() => toast('PRESS V FOR THE V2V DEMO: SAME TRACK, NO MISHAPS'), 7600);
+setTimeout(() => toast('DRIVE WITH W/A/S/D · TOGGLE ABS / TC / ESC IN THE CONSOLE'), 900);
+setTimeout(() => toast('TEST: STOP AND HOLD W — TC OFF SMOKES AND FISHTAILS, TC ON LAUNCHES CLEAN'), 4200);
+setTimeout(() => toast('TEST: 70 KM/H + HARD BRAKE — ABS OFF PLOWS AND LAYS RUBBER'), 7600);
+setTimeout(() => toast('PRESS V — ACC / FCW / AEB / EVASIVE STEER ON THE BSM LINK'), 11000);
 renderFrame();

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { scene, fog, skyGroup, makeTexture, speckle, bermTex, concTex, cityTexs, glareTex, poolTex, chevTex, signTex } from './env.js';
+import { scene, skyGroup, makeTexture, speckle, bermTex, concTex, cityTexs, glareTex, poolTex, chevTex, signTex } from './env.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 export const CFG = { laneW: 3.7, shoulder: 1.1 };
@@ -73,28 +73,25 @@ function makeRoadTex(def) {
   return t;
 }
 
-/* berm profile as a SHARED function: used by the sweep, the terrain
-   heightfield and the car's ground height — one source of truth */
+/* berm profile — single source of truth for the mesh, terrain and car ground height */
 const BERM_U = [0, 0.2, 1.55, 6, 12, 22, 34, 46, 54, 56];
-const BERM_H = [0, 0.02, 0.32, 1.05, 1.35, 1.05, 0.6, 0.3, 0.02, -0.45];
+const BERM_H = [0.02, 0.02, 0.32, 1.05, 1.35, 1.05, 0.6, 0.3, 0.02, -0.45];
 export function bermH(u) {
   if (u <= 0) return 0;
-  if (u >= BERM_U[BERM_U.length - 1]) return BERM_H[BERM_H.length - 1];
   for (let i = 1; i < BERM_U.length; i++) {
     if (u <= BERM_U[i]) {
       const k = (u - BERM_U[i - 1]) / (BERM_U[i] - BERM_U[i - 1]);
       return BERM_H[i - 1] + (BERM_H[i] - BERM_H[i - 1]) * k;
     }
   }
-  return 0;
+  return BERM_H[BERM_H.length - 1];
 }
 
 /* ============================================================
-   SWEEP with curvature clamping — THE fix for irregular tracks.
-   For each sample we know the local radius of curvature R and which
-   side the curve centre is on. Profile offsets on the inside of the
-   turn are clamped to fac*R so the ribbon can never sweep past the
-   centre and fold back over the road ("road buried under ground").
+   SWEEP with curvature clamping.
+   Inside offsets are clamped to fac * local radius of curvature so
+   ribbons can never sweep past the centre of a tight turn and fold
+   back over the road. (Fix for "road buried under the ground".)
    ============================================================ */
 function sweep(curve, L, profile, { segments = 1000, uPer = 1, vPer = 1, filterS = null, clampFac = 0.9 } = {}) {
   const m = profile.length, cum = [0];
@@ -103,37 +100,36 @@ function sweep(curve, L, profile, { segments = 1000, uPer = 1, vPer = 1, filterS
   const pos = new Float32Array((segments + 1) * m * 3);
   const uvA = new Float32Array((segments + 1) * m * 2);
   const idx = [], inc = new Array(segments + 1);
-  const P = new THREE.Vector3(), Tn = new THREE.Vector3(), R = new THREE.Vector3();
-  const tan = [], kap = [];
+  const tans = [];
+  for (let i = 0; i <= segments; i++) tans.push(curve.getTangentAt(i / segments));
+  /* signed curvature per sample. side < 0 → curve centre on the RIGHT. */
   const ds = L / segments;
-  for (let i = 0; i <= segments; i++) tan.push(curve.getTangentAt(i / segments));
-  for (let i = 0; i <= segments; i++) {           // smoothed curvature, side sign
-    const a = tan[i], b = tan[(i + 1) % (segments + 1)] || tan[i];
-    const cy = a.z * b.x - a.x * b.z, dot = a.x * b.x + a.z * b.z;
-    const ang = Math.atan2(cy, dot);
-    kap.push({ s: Math.sign(cy) || 0, k: ang / ds });
-  }
+  const curv = new Array(segments + 1);
   for (let i = 0; i <= segments; i++) {
-    let k = 0, sgn = 0;
-    for (let o = -2; o <= 2; o++) {
-      const j = Math.min(segments, Math.max(0, i + o));
-      k += kap[j].k; sgn ||= kap[j].s;
-    }
-    k /= 5;
-    const Rc = Math.min(1 / Math.max(Math.abs(k), 1e-5), 5000);
-    kap[i] = { r: Rc, side: sgn };
+    const a = tans[i], b = tans[(i + 1) % (segments + 1)];
+    const cy = a.z * b.x - a.x * b.z;
+    curv[i] = { k: Math.atan2(cy, a.x * b.x + a.z * b.z) / ds, side: Math.sign(cy) || 0 };
   }
+  /* box-smooth into a NEW array — overwriting in place bred NaN radii */
+  const sm = new Array(segments + 1);
+  for (let i = 0; i <= segments; i++) {
+    let k = 0;
+    for (let o = -2; o <= 2; o++) k += curv[Math.min(segments, Math.max(0, i + o))].k;
+    k /= 5;
+    sm[i] = { r: Math.min(1 / Math.max(Math.abs(k), 1e-5), 5000), side: curv[i].side };
+  }
+  const P = new THREE.Vector3(), Tn = new THREE.Vector3(), R = new THREE.Vector3();
   for (let i = 0; i <= segments; i++) {
     const u = i / segments, s = u * L;
     inc[i] = !filterS || filterS(s);
     curve.getPointAt(u, P);
-    Tn.copy(tan[i]);
+    Tn.copy(tans[i]);
     R.crossVectors(Tn, UP).normalize();
-    const { r, side } = kap[i];
+    const c = sm[i];
     for (let j = 0; j < m; j++) {
       let o = profile[j][0];
-      if (side < 0) o = Math.min(o, r * clampFac);        // centre on +r side → clamp + offsets
-      else if (side > 0) o = Math.max(o, -r * clampFac);  // centre on -r side → clamp - offsets
+      if (c.side < 0) o = Math.min(o, c.r * clampFac);       // centre on the right → clamp + offsets
+      else if (c.side > 0) o = Math.max(o, -c.r * clampFac); // centre on the left  → clamp − offsets
       const k = i * m + j;
       pos[k * 3] = P.x + R.x * o;
       pos[k * 3 + 1] = profile[j][1];
@@ -154,12 +150,12 @@ function sweep(curve, L, profile, { segments = 1000, uPer = 1, vPer = 1, filterS
   geo.setAttribute('uv', new THREE.BufferAttribute(uvA, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  if (!filterS) {
+  if (!filterS) {                                  // average seam normals on closed ribbons
     const n = geo.getAttribute('normal');
     for (let j = 0; j < m; j++) {
       const a = j, b = segments * m + j;
-      n.setXYZ(a, (n.getX(a) + n.getX(b)) / 2, (n.getY(a) + n.getY(b)) / 2, (n.getZ(a) + n.getZ(b)) / 2);
-      n.setXYZ(b, n.getX(a), n.getY(a), n.getZ(a));
+      const nx = (n.getX(a) + n.getX(b)) / 2, ny = (n.getY(a) + n.getY(b)) / 2, nz = (n.getZ(a) + n.getZ(b)) / 2;
+      n.setXYZ(a, nx, ny, nz); n.setXYZ(b, nx, ny, nz);
     }
   }
   return geo;
@@ -175,7 +171,7 @@ function detectBarrierWindow(curve, L) {
     kap.push(Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)) / ds);
   }
   const sm = kap.map((_, i) =>
-    (kap[(i + N - 2) % N] + kap[(i + N - 1) % N] + kap[i] + kap[(i + 1) % N] + kap[(i + 2) % N]) / 5);
+    (kap[(i + N - 2) % N] + kap[(i + N - 1) % N] + kap[i] + kap[(i + 1) % N] + kap[(i + N + 2) % N]) / 5);
   let iMax = 0;
   for (let i = 1; i < N; i++) if (sm[i] > sm[iMax]) iMax = i;
   const thr = sm[iMax] * 0.45;
@@ -191,8 +187,7 @@ function detectBarrierWindow(curve, L) {
   return { s0: (a / N) * L, s1: (b / N) * L, side: cY < 0 ? 1 : -1 };
 }
 
-/* spatial hash over curve samples → fast nearest-point queries for
-   the terrain heightfield, surface grip and world→arc projection */
+/* spatial hash over curve samples → fast nearest-point queries */
 function buildCurveHash(curve, L) {
   const N = THREE.MathUtils.clamp(Math.round(L / 1.3), 400, 6000);
   const samples = [];
@@ -204,7 +199,8 @@ function buildCurveHash(curve, L) {
   const CS = 14, cells = new Map();
   samples.forEach((sm, i) => {
     const key = Math.floor(sm.x / CS) + ',' + Math.floor(sm.z / CS);
-    (cells.get(key) || cells.set(key, []).get(key)).push(i);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(i);
   });
   return {
     N, samples, CS,
@@ -240,10 +236,45 @@ function terrainNoise(x, z) {
   return 0.6 * vn(x * 0.011, z * 0.011) + 0.4 * vn(x * 0.037, z * 0.037);
 }
 
+/* terrain height given distance to the road centreline.
+   Invariant: h ≤ -0.12 inside the deck corridor → the road can NEVER
+   be buried, on any track shape. Takes deckHalf as a parameter because
+   T is deliberately null during a rebuild. */
+function terrainHeight(d, x, z, deckHalf) {
+  const u = d - deckHalf;
+  if (u <= 0) return -0.12;                       // strictly under the deck
+  if (u <= 54) return bermH(u) - 0.16;            // just below the berm mesh
+  const t = THREE.MathUtils.smoothstep(u, 54, 120);
+  return (0.02 - 0.16) * (1 - t) + t * ((terrainNoise(x, z) * 2 - 0.75) * 5);
+}
+export function groundHeightAt(x, z) {
+  if (!T) return 0;
+  const q = T.hash.nearest(x, z);
+  return q ? terrainHeight(q.d, x, z, T.deckHalf) : 0;
+}
+
+/* surface query for physics: grip + lateral position + station + tangent */
+export function surfaceAt(x, z) {
+  if (!T) return { d: 1e9, lat: 1e9, s: 0, mu: 0.5, off: true, tx: 1, tz: 0 };
+  const q = T.hash.nearest(x, z);
+  if (!q) return { d: 1e9, lat: 1e9, s: 0, mu: 0.5, off: true, tx: 1, tz: 0 };
+  const lat = (x - q.x) * (-q.tz) + (z - q.z) * q.tx;   // + = right of travel dir
+  const al = Math.abs(lat);
+  const mu = al <= T.pavedHalf + 0.4 ? 1.05 : al <= T.deckHalf + 2.5 ? 0.85 : al <= T.deckHalf + 9 ? 0.5 : 0.45;
+  return { d: q.d, lat, s: q.s, mu, off: al > T.pavedHalf + 0.2, tx: q.tx, tz: q.tz };
+}
+export function latHeight(lat) {
+  if (!T) return 0;
+  const u = Math.abs(lat) - T.deckHalf;
+  return u <= 0 ? 0 : Math.min(bermH(u), 1.35);
+}
+
+/* shared, persistent materials (never disposed across rebuilds) */
 const roadMat = new THREE.MeshStandardMaterial({ roughness: 0.88, metalness: 0.03, side: THREE.DoubleSide });
 const radarRoadMat = new THREE.MeshBasicMaterial({ color: 0xc4d8ee, fog: false });
 const radarBarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff5a40).multiplyScalar(1.7), fog: false, side: THREE.DoubleSide });
 const bermMat = new THREE.MeshStandardMaterial({ map: bermTex, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+const concMat = new THREE.MeshStandardMaterial({ map: concTex, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide });
 const railMat = new THREE.MeshStandardMaterial({ color: 0x97a0aa, metalness: 0.85, roughness: 0.38, side: THREE.DoubleSide });
 const poleMat = new THREE.MeshStandardMaterial({ color: 0x565d66, metalness: 0.8, roughness: 0.45 });
 const bulbMat = new THREE.MeshStandardMaterial({ color: 0x221607, emissive: 0xffd9a4, emissiveIntensity: 3.2, roughness: 0.4 });
@@ -254,36 +285,8 @@ const signMat = new THREE.MeshStandardMaterial({ map: signTex, emissive: 0xfffff
 const steelMat = new THREE.MeshStandardMaterial({ color: 0x3a3f46, metalness: 0.75, roughness: 0.5 });
 const catEyeMat = new THREE.PointsMaterial({ map: glareTex, color: 0xffb156, size: 0.16, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
 const lampGlowMat = new THREE.PointsMaterial({ map: glareTex, color: 0xffd2a0, size: 1.6, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-const terrainMat = new THREE.MeshStandardMaterial({ map: bermTex, roughness: 1, metalness: 0, vertexColors: true });
-
-/* ground height of any world point (car body + city placement + chase cam) */
-export function groundHeightAt(x, z) {
-  if (!T) return 0;
-  const q = T.hash.nearest(x, z);
-  if (!q) return 0;
-  return terrainHeight(q.d, x, z);
-}
-function terrainHeight(d, x, z) {
-  const u = d - T.deckHalf;
-  if (u <= 0) return -0.12;                       // strictly under the deck
-  if (u <= 54) return bermH(u) - 0.16;            // embankment, just below the berm mesh
-  const t = THREE.MathUtils.smoothstep(u, 54, 120);
-  return (0.02 - 0.16) * (1 - t) + t * ((terrainNoise(x, z) * 2 - 0.75) * 5);
-}
-
-/* surface query for physics: grip + lateral position + station */
-export function surfaceAt(x, z) {
-  const q = T.hash.nearest(x, z);
-  if (!q) return { d: 1e9, lat: 1e9, s: 0, mu: 0.5, off: true, tx: 1, tz: 0 };
-  const lat = (x - q.x) * (-q.tz) + (z - q.z) * q.tx;   // signed lateral offset (+ = right of travel dir)
-  const al = Math.abs(lat);
-  const mu = al <= T.pavedHalf + 0.4 ? 1.05 : al <= T.deckHalf + 2.5 ? 0.85 : al <= T.deckHalf + 9 ? 0.5 : 0.45;
-  return { d: q.d, lat, s: q.s, mu, off: al > T.pavedHalf + 0.2, tx: q.tx, tz: q.tz };
-}
-export function latHeight(lat) {
-  const u = Math.abs(lat) - T.deckHalf;
-  return u <= 0 ? 0 : Math.min(bermH(u), 1.35);
-}
+const terrainTex = bermTex.clone(); terrainTex.needsUpdate = true; terrainTex.repeat.set(90, 90);
+const terrainMat = new THREE.MeshStandardMaterial({ map: terrainTex, roughness: 1, metalness: 0, vertexColors: true });
 
 /* ---------- the world rebuild ---------- */
 export function buildTrack(def) {
@@ -292,11 +295,12 @@ export function buildTrack(def) {
   if (old) {
     scene.remove(old.group);
     old.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    old.own.forEach(m => m.dispose());            // dispose only per-track materials
     old.roadTex.dispose();
-    old.mats.forEach(m => m.dispose());
   }
+  const own = [];                                 // per-track materials (city window sheets)
   const curve = new THREE.CatmullRomCurve3(
-    def.points.map(p => new THREE.Vector3(p[0], 0, p[1])), true, 'centripetal');   // no overshoot on irregular spacing
+    def.points.map(p => new THREE.Vector3(p[0], 0, p[1])), true, 'centripetal');
   curve.arcLengthDivisions = 1600;
   const L = curve.getLength();
   const { paved, deckW, deckHalf, pavedHalf } = roadMetrics(def);
@@ -317,7 +321,6 @@ export function buildTrack(def) {
 
   const group = new THREE.Group();
   scene.add(group);
-  const mats = [roadMat, radarRoadMat, radarBarMat, bermMat, railMat, poleMat, bulbMat, postMat, poolMat, chevMat, signMat, steelMat, catEyeMat, lampGlowMat, terrainMat];
   const qL = v => L / Math.round(L / v);
   const at = s => {
     const u = (((s / L) % 1) + 1) % 1;
@@ -326,7 +329,7 @@ export function buildTrack(def) {
   };
   const hash = buildCurveHash(curve, L);
 
-  /* road deck + radar twin — deck clamp 0.97: only bites on pathological radii */
+  /* road deck + radar twin */
   const roadGeo = sweep(curve, L, [[-deckHalf, 0.005], [deckHalf, 0.005]], { uPer: deckW, vPer: qL(12), clampFac: 0.97 });
   const road = new THREE.Mesh(roadGeo, roadMat);
   road.receiveShadow = true;
@@ -336,24 +339,21 @@ export function buildTrack(def) {
   rRoad.position.y = 0.09;
   group.add(rRoad);
 
-  /* curbs (extended skirt tucks under terrain) */
+  /* curbs (skirt tucks under the terrain) */
   for (const sg of [1, -1]) {
     const prof = [[deckHalf - 0.7, 0], [deckHalf - 0.7, 0.15], [deckHalf + 0.15, 0.15], [deckHalf + 0.55, -0.25]]
       .map(([o, h]) => [sg * o, h]);
-    const curb = new THREE.Mesh(sweep(curve, L, prof, { uPer: 1, vPer: qL(6) }), concTex ? new THREE.MeshStandardMaterial({ map: concTex, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide }) : bermMat);
+    const curb = new THREE.Mesh(sweep(curve, L, prof, { uPer: 1, vPer: qL(6) }), concMat);
     curb.receiveShadow = true;
-    mats.push(curb.material);
     group.add(curb);
   }
-  /* berms */
-  const bOff = [0, 0.2, 1.55, 6, 12, 22, 34, 46, 54, 56];
-  const bH = [0.02, 0.02, 0.32, 1.05, 1.35, 1.05, 0.6, 0.3, 0.02, -0.45];
+  /* berms — share BERM_U/BERM_H with the height model */
   for (const sg of [1, -1]) {
-    const berm = new THREE.Mesh(sweep(curve, L, bOff.map((o, i) => [sg * (deckHalf + o), bH[i]]), { uPer: 7, vPer: qLoop(qL, 14) }), bermMat);
+    const berm = new THREE.Mesh(
+      sweep(curve, L, BERM_U.map((o, i) => [sg * (deckHalf + o), BERM_H[i]]), { uPer: 7, vPer: qL(14) }), bermMat);
     berm.receiveShadow = true;
     group.add(berm);
   }
-  function qLoop(_q, v) { return v; }
 
   /* guardrails + posts (skipped where the wall takes over) */
   const skipR = bar && bar.side === 1, skipL = bar && bar.side === -1;
@@ -389,13 +389,12 @@ export function buildTrack(def) {
     const wallProf = [[deckHalf - 0.05, 0], [deckHalf - 0.05, 5.3], [deckHalf + 0.45, 5.5],
       [deckHalf + 0.95, 5.5], [deckHalf + 1.35, 5.3], [deckHalf + 1.35, 0]]
       .map(([o, h]) => [side * o, h]);
-    const wall = new THREE.Mesh(sweep(curve, L, wallProf, { filterS: inWin, uPer: 5.5, vPer: 3.4, segments: 700 }), mats[15] || wallMatOf());
-    function wallMatOf() { const m = new THREE.MeshStandardMaterial({ map: concTex, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide }); mats.push(m); return m; }
+    const wall = new THREE.Mesh(sweep(curve, L, wallProf, { filterS: inWin, uPer: 5.5, vPer: 3.4, segments: 700 }), concMat);
     wall.castShadow = wall.receiveShadow = true;
     group.add(wall);
     for (const ss of [bar.s0, bar.s1]) {
       const f = at(ss);
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(1.3, 5.6, 1.3), wall.material);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(1.3, 5.6, 1.3), concMat);
       cap.position.set(f.p.x + f.r.x * side * (deckHalf + 0.65), 2.75, f.p.z + f.r.z * side * (deckHalf + 0.65));
       cap.rotation.y = Math.atan2(f.t.x, f.t.z);
       cap.castShadow = cap.receiveShadow = true;
@@ -407,7 +406,9 @@ export function buildTrack(def) {
       const f = at(bar.s0 + d);
       const g = new THREE.PlaneGeometry(1.5, 0.95);
       q.setFromAxisAngle(UP, Math.atan2(-f.t.x, -f.t.z));
-      m4.compose(new THREE.Vector3(f.p.x + f.r.x * side * (deckHalf - 0.04), 2.55, f.p.z + f.r.z * side * (deckHalf - 0.04)), q, one);
+      m4.compose(new THREE.Vector3(
+        f.p.x + f.r.x * side * (deckHalf - 0.04), 2.55,
+        f.p.z + f.r.z * side * (deckHalf - 0.04)), q, one);
       g.applyMatrix4(m4);
       chevs.push(g);
     }
@@ -485,9 +486,7 @@ export function buildTrack(def) {
     group.add(new THREE.Points(g, lampGlowMat));
   }
 
-  /* ---------- adaptive terrain heightfield ----------
-     invariant: h ≤ -0.12 wherever within the deck corridor → the road
-     can never end up under the ground, on ANY track shape */
+  /* ---------- adaptive terrain heightfield ---------- */
   let cx = 0, cz = 0, x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, tr = 0;
   {
     const lut = hash.samples;
@@ -499,7 +498,7 @@ export function buildTrack(def) {
     cx /= lut.length; cz /= lut.length;
     for (const p of lut) tr = Math.max(tr, Math.hypot(p.x - cx, p.z - cz));
     skyGroup.position.set(cx, 0, cz);
-    const M = 300, res = 4;
+    const M = 240, res = 6;
     const gw = Math.ceil((x1 - x0 + 2 * M) / res) + 1, gh = Math.ceil((z1 - z0 + 2 * M) / res) + 1;
     const pos = new Float32Array(gw * gh * 3);
     const col = new Float32Array(gw * gh * 3);
@@ -507,7 +506,7 @@ export function buildTrack(def) {
     for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
       const x = x0 - M + i * res, z = z0 - M + j * res;
       const q = hash.nearest(x, z);
-      const h = terrainHeight(q ? q.d : 1e9, x, z);
+      const h = terrainHeight(q ? q.d : 1e9, x, z, deckHalf);   // deckHalf passed, T is null here
       const k = (j * gw + i) * 3;
       pos[k] = x; pos[k + 1] = h; pos[k + 2] = z;
       const n = terrainNoise(x * 0.05, z * 0.05);
@@ -524,22 +523,23 @@ export function buildTrack(def) {
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
     geo.computeVertexNormals();
     const terrain = new THREE.Mesh(geo, terrainMat);
-    terrainMat.map.repeat.set(90, 90);
     terrain.receiveShadow = true;
     group.add(terrain);
   }
 
-  /* city — inner cluster follows the terrain, far ring floats above the fog */
+  /* city — inner cluster sits on the terrain, far ring floats above the fog */
   {
-    const lut = hash.samples;
+    const groundH = (x, z) => {                   // local: uses hash + local deckHalf
+      const q = hash.nearest(x, z);
+      return q ? terrainHeight(q.d, x, z, deckHalf) : 0;
+    };
     const inner = [];
     const ir = Math.max(26, Math.min(x1 - x0, z1 - z0) * 0.32);
     for (let t = 0; t < 200 && inner.length < 14; t++) {
       const a = Math.random() * 6.283, rr = Math.random() * ir;
       const x = cx + Math.cos(a) * rr, z = cz + Math.sin(a) * rr * 0.8;
-      let ok = true;
-      for (const p of lut) if ((p.x - x) ** 2 + (p.z - z) ** 2 < (deckHalf + 18) ** 2) { ok = false; break; }
-      if (ok) inner.push([x, z]);
+      const q = hash.nearest(x, z);
+      if (q && q.d > deckHalf + 18) inner.push([x, z]);
     }
     const ring = () => {
       const a = Math.random() * 6.283, r = tr + 180 + Math.random() * 240;
@@ -558,18 +558,18 @@ export function buildTrack(def) {
         const uv = g.getAttribute('uv');
         const ox = Math.random() * 3, oy = Math.random() * 3;
         for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) + ox, uv.getY(k) + oy);
-        g.translate(x, (innerB ? groundHeight(x, z) : 0) + h / 2, z);
+        g.translate(x, (innerB ? groundH(x, z) : 0) + h / 2, z);
         geos.push(g);
       }
       const mat = new THREE.MeshStandardMaterial({
         color: 0x04060c, emissive: 0xffffff, emissiveMap: tex,
         emissiveIntensity: ti === 0 ? 1.15 : 0.55, roughness: 1, fog: ti === 0 });
-      mats.push(mat);
+      own.push(mat);
       group.add(new THREE.Mesh(mergeGeometries(geos), mat));
     });
   }
 
-  T = { def, curve, L, hash, laneLat, paved, pavedHalf, deckHalf, deckW, bar, inWin, lamps, group, mats, roadTex };
+  T = { def, curve, L, hash, laneLat, paved, pavedHalf, deckHalf, deckW, bar, inWin, lamps, group, own, roadTex };
   return T;
 }
 
@@ -602,4 +602,4 @@ export function updateLampLights(dt, sEgo) {
       } else d.lamp = -1;
     }
   }
-} 
+}
