@@ -2025,6 +2025,76 @@ function collectRayTargets() {
   if (T.wallMesh) rayTargets.push(T.wallMesh);
   for (const rl of T.railMeshes) rayTargets.push(rl);
 }
+let sensorVis = null;
+function makeSensorVisualizer() {
+  const group = new THREE.Group();
+  const N_RAYS = 15;
+  const rayAngles = [];
+  for (let i = 0; i < N_RAYS; i++) {
+    rayAngles.push((-24 + (48 / (N_RAYS - 1)) * i) * Math.PI / 180);
+  }
+  
+  // Dynamic Ray Lines
+  const rayPositions = new Float32Array(N_RAYS * 2 * 3);
+  const rayGeo = new THREE.BufferGeometry();
+  rayGeo.setAttribute('position', new THREE.BufferAttribute(rayPositions, 3));
+  const rayMat = new THREE.LineBasicMaterial({
+    color: 0x45e6ff,
+    transparent: true,
+    opacity: 0.65,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const rayLines = new THREE.LineSegments(rayGeo, rayMat);
+  group.add(rayLines);
+
+  // Range Arcs at 15m, 35m, 60m
+  const arcDistances = [15, 35, 60];
+  const arcPositions = [];
+  const minA = -24 * Math.PI / 180, maxA = 24 * Math.PI / 180;
+  const arcSteps = 32;
+  for (const dist of arcDistances) {
+    for (let s = 0; s < arcSteps; s++) {
+      const a1 = minA + (maxA - minA) * (s / arcSteps);
+      const a2 = minA + (maxA - minA) * ((s + 1) / arcSteps);
+      arcPositions.push(Math.sin(a1) * dist, 0.45, -Math.cos(a1) * dist - 2.3);
+      arcPositions.push(Math.sin(a2) * dist, 0.45, -Math.cos(a2) * dist - 2.3);
+    }
+  }
+  const arcGeo = new THREE.BufferGeometry();
+  arcGeo.setAttribute('position', new THREE.Float32BufferAttribute(arcPositions, 3));
+  const arcMat = new THREE.LineBasicMaterial({
+    color: 0x45e6ff,
+    transparent: true,
+    opacity: 0.30,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const arcLines = new THREE.LineSegments(arcGeo, arcMat);
+  group.add(arcLines);
+
+  function update(hits) {
+    const pos = rayGeo.attributes.position.array;
+    for (let i = 0; i < N_RAYS; i++) {
+      const a = rayAngles[i];
+      const maxFar = 65;
+      let d = maxFar;
+      if (hits && hits[i] !== undefined) d = Math.min(hits[i], maxFar);
+      const idx = i * 6;
+      pos[idx] = 0;
+      pos[idx + 1] = 0.55;
+      pos[idx + 2] = -2.3;
+      pos[idx + 3] = Math.sin(a) * d;
+      pos[idx + 4] = 0.45;
+      pos[idx + 5] = -2.3 - Math.cos(a) * d;
+    }
+    rayGeo.attributes.position.needsUpdate = true;
+  }
+
+  update(new Array(N_RAYS).fill(65));
+  return { group, update, rayAngles };
+}
+
 function updateSensors(et) {
   const dtS = Math.max(0.005, et - lastSenseT);
   lastSenseT = et;
@@ -2052,19 +2122,25 @@ function updateSensors(et) {
   /* forward radar fan */
   let nearest = null;
   const fanOx = dyn.x + f.x * 1.9, fanOz = dyn.z + f.z * 1.9;
-  for (let k = -4; k <= 4; k++) {
-    const a = k * 3 * Math.PI / 180;
+  const rayHitDistances = [];
+  const N_FAN = 15;
+  for (let k = 0; k < N_FAN; k++) {
+    const a = (-24 + (48 / (N_FAN - 1)) * k) * Math.PI / 180;
     const ca = Math.cos(a), sa = Math.sin(a);
     const dx = f.x * ca - f.z * sa, dz = f.x * sa + f.z * ca;
     const h = castRay(fanOx, 0.55, fanOz, dx, dz, SENS.radar.far);
     if (h) {
+      rayHitDistances.push(h.distance);
       const wx = fanOx + dx * h.distance, wz = fanOz + dz * h.distance;
       const latOff = Math.sin(a) * h.distance;
       if (Math.abs(latOff) < 2.4 && (!nearest || h.distance < nearest.dist))
         nearest = { dist: h.distance, latOff, tag: tagOf(h.object) };
       hits.push({ x: wx, z: wz, tag: tagOf(h.object) });
+    } else {
+      rayHitDistances.push(65);
     }
   }
+  if (sensorVis) sensorVis.update(rayHitDistances);
   SENS.radar.nearest = nearest;
   /* ultrasonic — 6 fixed bumper channels, capped at 7 m when clear.
      Cast at 0.55 m so rails/barrels/curbs are all in the beam band. */
@@ -3183,7 +3259,7 @@ const trackDef = {
 };
 const adas = createADAS();
 const aids = { on: true };
-let mode = 'manual';
+let mode = 'perception';
 const player = { spawnU: 0.08, cruise: 13.9, hint: 0 };
 const dyn = new VehicleDynamics();
 const scenario = [];
@@ -3197,6 +3273,8 @@ ego.car.add(fpsCam);
 fpsCam.position.set(-0.33, 1.15, 0.15);         // COCKPIT VIEW — behind steering wheel in driver seat
 ego.car.add(SENS.camCam);                    // bumper-mounted sensor camera
 SENS.camCam.position.set(0, 0.6, -2.5);
+sensorVis = makeSensorVisualizer();
+ego.car.add(sensorVis.group);
 
 const marks = new SkidMarks(scene);
 const smoke = new TyreSmoke(scene);
