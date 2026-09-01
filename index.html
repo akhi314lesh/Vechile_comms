@@ -150,7 +150,7 @@
   <div class="rule"></div>
   <div class="sub">HOST BUMPER CAM — RAY + RADIO PERCEPTION · CUSTOM TRACKS · ADAS</div>
   <div id="tele">—</div>
-  <div id="keys">[W/S] PEDALS · [A/D] ANALOGUE STEER (V2V: LANE REQUEST) · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
+  <div id="keys">[W/S] PEDALS · [A/D] STEER (V2V: LANE REQ) · [C] CAMERA POV · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
 </header>
 <div id="alert"></div>
 
@@ -164,8 +164,9 @@
       <button id="mV2v" class="btn">V2V</button>
       <button id="mDebug" class="btn">DEBUG</button>
     </div>
+    <div class="crow"><span>CAMERA POV</span><button id="povTgl" class="tgl on">CHASE</button></div>
     <div class="crow"><span>DRIVER AIDS · ESC+ABS+EBD</span><button id="aidsTgl" class="tgl on">ON</button></div>
-    <div class="hint" id="modeHint">WASD TO DRIVE · AIDS TOGGLEABLE</div>
+    <div class="hint" id="modeHint">WASD TO DRIVE · AIDS TOGGLEABLE · C = TOGGLE POV</div>
   </div>
   <div class="sec" id="rlSec" style="display:none">
     <label>RL AGENT CONTROLS</label>
@@ -1140,12 +1141,12 @@ function makeRoadTex(def, met) {
       for (let k = 0; k < 6; k++) { x += (Math.random() - .5) * 60; y += (Math.random() - .5) * 80; ctx.lineTo(x, y); }
       ctx.stroke();
     }
-    const W = 'rgba(226,229,233,0.92)', Y = 'rgba(214,171,64,0.95)';
-    const solid = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.06), 0, 0.12 * m2px, h); };
-    const dash = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.06), 0, 0.12 * m2px, 170); };
-    solid(-met.pavedHalf + 0.25, W); solid(met.pavedHalf - 0.25, W);
+    const W = 'rgba(240,244,248,0.96)', Y = 'rgba(255,195,64,0.98)';
+    const solid = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.11), 0, 0.22 * m2px, h); };
+    const dash = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.10), 0, 0.20 * m2px, 200); };
+    solid(-met.pavedHalf + 0.3, W); solid(met.pavedHalf - 0.3, W);
     if (def.lanesO > 0) {
-      solid(-0.2, Y); solid(0.2, Y);
+      solid(-0.25, Y); solid(0.25, Y);
       for (let i = 1; i < def.lanesF; i++) dash(i * CFG.laneW, W);
       for (let i = 1; i < def.lanesO; i++) dash(-i * CFG.laneW, W);
     } else {
@@ -2118,6 +2119,63 @@ function makeSensorVisualizer() {
   return { group, update, rayAngles };
 }
 
+let laneGuide = null;
+function makeLaneGuideVisualizer(scene) {
+  const N_PTS = 40;
+  const positions = new Float32Array(N_PTS * 3);
+  const colors = new Float32Array(N_PTS * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.88,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const line = new THREE.Line(geo, mat);
+  line.renderOrder = 4;
+  scene.add(line);
+
+  function update(track, egoS, egoLat, currentLane) {
+    if (!track || !track.curve) return;
+    const pos = geo.attributes.position.array;
+    const col = geo.attributes.color.array;
+    const targetLat = track.laneLat ? track.laneLat('fwd', currentLane) : egoLat;
+    
+    for (let i = 0; i < N_PTS; i++) {
+      const distAhead = (i + 1) * 1.35;
+      const s = (egoS + distAhead) % track.L;
+      const u = (s / track.L + 1) % 1;
+      const pt = track.curve.getPointAt(u);
+      const tang = track.curve.getTangentAt(u);
+      const rightX = tang.z, rightZ = -tang.x;
+      const rLen = Math.hypot(rightX, rightZ) || 1;
+      const rx = rightX / rLen, rz = rightZ / rLen;
+      
+      const wx = pt.x + rx * targetLat;
+      const wy = 0.38 + (pt.y || 0);
+      const wz = pt.z + rz * targetLat;
+      
+      const idx = i * 3;
+      pos[idx] = wx;
+      pos[idx + 1] = wy;
+      pos[idx + 2] = wz;
+
+      const alpha = Math.max(0.08, 1.0 - (i / N_PTS));
+      col[idx] = 0.22 * alpha;
+      col[idx + 1] = 0.92 * alpha;
+      col[idx + 2] = 1.00 * alpha;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  return { line, update };
+}
+
 function updateSensors(et) {
   const dtS = Math.max(0.005, et - lastSenseT);
   lastSenseT = et;
@@ -2530,14 +2588,18 @@ function computePolicy(dt, proj) {
   pedSlew.br += clamp(brT - pedSlew.br, -5 * dt, 3.5 * dt);
   out.throttle = pedSlew.th; out.brake = pedSlew.br; out.vt = vt;
 
-  /* ---- LKA: holds the CURRENT lane, only with no maneuver input ---- */
+  /* ---- LKA: Strict High-Precision Lane Centering & Curvature Feedforward ---- */
   if (!out.evasive && (adas.lka || out.alcActive)) {
     const latTarget = out.alcActive ? st.latNow : centerOf(curLane);
-    if (Math.abs(egoLat - latTarget) < 3.4) {
-      const corr = clamp(0.055 * (egoLat - latTarget) - 0.6 * wrapAngle(dyn.psi - proj.psi), -0.15, 0.15);
-      out.steer = clamp(corr / 0.56, -1, 1);
-      out.lkaActive = !out.alcActive && Math.abs(corr) > 0.015;
-    }
+    const latErr = egoLat - latTarget;
+    const headingErr = wrapAngle(dyn.psi - proj.psi);
+    // High-precision Stanley cross-track error + heading damping + curvature feedforward
+    const kLat = 0.38 / Math.max(1.0, u * 0.05);
+    const kHead = 0.68;
+    const kCurv = (proj.kappa || 0) * (3.4 + u * 0.16);
+    const steerCmd = clamp(kLat * latErr - kHead * headingErr + kCurv, -1.0, 1.0);
+    out.steer = steerCmd;
+    out.lkaActive = !out.alcActive && Math.abs(latErr) > 0.015;
   }
   return out;
 }
@@ -3038,6 +3100,7 @@ function initUI(env) {
   if ($('mPerception')) $('mPerception').onclick = () => env.api.setMode('perception');
   if ($('mV2v')) $('mV2v').onclick = () => env.api.setMode('v2v');
   if ($('mDebug')) $('mDebug').onclick = () => env.api.setMode('debug');
+  if ($('povTgl')) $('povTgl').onclick = () => togglePOV();
 
   // RL Environment & WebSocket Client Setup
   rlEnv = new V2VRLEnvironment({ headless: false });
@@ -3356,6 +3419,7 @@ ego.car.add(SENS.camCam);                    // bumper-mounted sensor camera
 SENS.camCam.position.set(0, 0.6, -2.5);
 sensorVis = makeSensorVisualizer();
 ego.car.add(sensorVis.group);
+laneGuide = makeLaneGuideVisualizer(scene);
 
 const marks = new SkidMarks(scene);
 const smoke = new TyreSmoke(scene);
@@ -3513,6 +3577,7 @@ addEventListener('keydown', e => {
   if (editor.isOpen()) return;
   switch (e.code) {
     case 'KeyR': resetRun(); break;
+    case 'KeyC': togglePOV(); break;
     case 'KeyV': setMode(mode === 'manual' ? 'v2v' : 'manual'); break;
     case 'KeyA': if (mode === 'v2v') alcRequest(-1); break;
     case 'KeyD': if (mode === 'v2v') alcRequest(1); break;
@@ -4063,22 +4128,44 @@ function getSensorFrame() {
   };
 }
 
-/* ---------- camera: bumper view with lean + shake ---------- */
+let currentPOV = 'chase'; // 'chase' (elevated 3rd person) or 'cockpit' (1st person)
+function togglePOV() {
+  currentPOV = currentPOV === 'chase' ? 'cockpit' : 'chase';
+  const btn = document.getElementById('povTgl');
+  if (btn) btn.textContent = currentPOV.toUpperCase();
+  toast(currentPOV === 'chase' ? 'POV: THIRD-PERSON CHASE CAM' : 'POV: FIRST-PERSON COCKPIT CAM');
+}
+
+/* ---------- camera: dual POV (chase & cockpit) with lean + shake ---------- */
 function updateCamera(dt, et) {
   const driving = keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD ||
     keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight;
-  const k = 1 - Math.exp(-dt * 3.2);
-  yaw += ((driving && mode === 'manual' ? 0 : -mx * 0.5) - yaw) * k;
-  pitch += ((-0.03 - (driving && mode === 'manual' ? 0 : my * 0.16)) - pitch) * k;
-  let py = 1.15 + Math.sin(et * 8.5) * 0.004 * Math.min(1, Math.abs(dyn.u) / 20);
-  if (!onPavement && Math.abs(dyn.u) > 1) py += (Math.random() - 0.5) * 0.03;
-  if (shakeT > 0) {
-    shakeT -= dt;
-    py += (Math.random() - 0.5) * 0.08 * shakeT;
-    yaw += (Math.random() - 0.5) * 0.05 * shakeT;
+  const k = 1 - Math.exp(-dt * 3.6);
+  yaw += ((driving && (mode === 'manual' || mode === 'driving') ? 0 : -mx * 0.5) - yaw) * k;
+  pitch += ((-0.03 - (driving && (mode === 'manual' || mode === 'driving') ? 0 : my * 0.16)) - pitch) * k;
+
+  if (currentPOV === 'chase') {
+    // Elevated third-person chase camera (matches overview perspective)
+    let camY = 3.65 + Math.sin(et * 7.0) * 0.003;
+    let camZ = 8.4;
+    if (shakeT > 0) {
+      shakeT -= dt;
+      camY += (Math.random() - 0.5) * 0.08 * shakeT;
+    }
+    fpsCam.position.set(0, camY, camZ);
+    fpsCam.rotation.set(-0.16 + pitch * 0.35, yaw * 0.45, -yaw * 0.04);
+  } else {
+    // First-person cockpit camera (inside cabin behind wheel)
+    let py = 1.15 + Math.sin(et * 8.5) * 0.004 * Math.min(1, Math.abs(dyn.u) / 20);
+    if (!onPavement && Math.abs(dyn.u) > 1) py += (Math.random() - 0.5) * 0.03;
+    if (shakeT > 0) {
+      shakeT -= dt;
+      py += (Math.random() - 0.5) * 0.08 * shakeT;
+      yaw += (Math.random() - 0.5) * 0.05 * shakeT;
+    }
+    fpsCam.position.set(-0.33, py, 0.15);
+    fpsCam.rotation.set(pitch, yaw + clamp(dyn.delta * 0.12, -0.08, 0.08), -yaw * 0.05 + clamp(dyn.ay * 0.004, -0.05, 0.05));
   }
-  fpsCam.rotation.set(pitch, yaw + clamp(dyn.delta * 0.12, -0.08, 0.08), -yaw * 0.05 + clamp(dyn.ay * 0.004, -0.05, 0.05));
-  fpsCam.position.set(-0.33, py, 0.15);
 }
 
 /* ---------- resize + render loop ---------- */
@@ -4104,6 +4191,7 @@ function renderFrame() {
       if (camT <= 0) { camT = 1 / 8; if (SENS.on) updateCameraFeed(); }
       const proj = updatePlayer(dt);
       egoProj = proj;
+      if (laneGuide && T && egoProj) laneGuide.update(T, egoProj.s, egoProj.lat, nearestLaneIdx(T, egoProj.lat));
       updateAI(dt, proj.s, proj.lat, et);
       updateCrossCars(dt, et);
       if (mode !== 'rl_train') checkCollisions(dt);
