@@ -2768,45 +2768,66 @@ class LaneChangeStateMachine {
 class LaneKeepController {
   constructor(config = {}) {
     this.dt = config.dt ?? 1.0 / 30.0;
-    this.kLatGain = config.kLatGain ?? 0.44;
-    this.kLatSpeed = config.kLatSpeed ?? 0.055;
-    this.kHead = config.kHead ?? 0.72;
     this.wheelbase = config.wheelbase ?? 3.2;
     this.kUndersteer = config.kUndersteer ?? 0.16;
-    this.kDamp = config.kDamp ?? 0.12;
+    this.tauSteer = config.tauSteer ?? 0.08;
     this.maxSlew = config.maxSlew ?? 5.5;
     this.deadbandLat = config.deadbandLat ?? 0.02;
     this.deadbandHead = config.deadbandHead ?? 0.010;
+    this.prevRaw = 0.0;
     this.steer = 0.0;
   }
   reset(steer = 0.0) {
     this.steer = clamp(steer, -1.0, 1.0);
+    this.prevRaw = this.steer;
   }
   update(eLat, ePsi, kappa, v, omega) {
     if (![eLat, ePsi, kappa, v, omega].every(Number.isFinite)) return this.steer;
     v = Math.max(v, 0.0);
+    const vKmh = v * 3.6;
     const wrappedHeading = wrapAngle(ePsi);
-    const kLat = this.kLatGain / Math.max(1.0, v * this.kLatSpeed);
+
+    // 1. Continuous speed-decay cross-track gain (resolves 0-60 km/h constant-gain bug)
+    const kLat = 0.44 / (1.0 + 0.022 * v);
+
+    // 2. Heading alignment gain
+    const kHead = 0.72 + 0.002 * vKmh;
+
+    // 3. Speed-scheduled excess yaw damping (critically damps yaw rate at high speeds)
+    const kDamp = 0.12 + 0.003 * vKmh;
+
+    // 4. Curvature feedforward
     const ff = kappa * (this.wheelbase + v * this.kUndersteer);
 
+    // 5. Smooth C^inf Convergence Scaling (prevents threshold chattering near 0.45m)
     let effectiveKLat = kLat;
     const isConverging = (eLat > 0 && wrappedHeading < -0.01) || (eLat < 0 && wrappedHeading > 0.01);
     if (isConverging && Math.abs(eLat) < 0.45) {
-      effectiveKLat *= 0.60;
+      effectiveKLat *= (0.60 + 0.40 * Math.tanh(Math.abs(eLat) / 0.45));
     }
 
-    let raw = effectiveKLat * eLat - this.kHead * wrappedHeading + ff;
+    // Smooth spline deadband on cross-track error near lane center
+    if (Math.abs(eLat) < this.deadbandLat) {
+      const u = Math.abs(eLat) / this.deadbandLat;
+      effectiveKLat *= (u * u);
+    }
+
+    // 6. Raw control law with excess-yaw-rate damping
+    let raw = effectiveKLat * eLat - kHead * wrappedHeading + ff;
     const excessYawRate = omega - v * kappa;
-    raw -= this.kDamp * excessYawRate;
+    const damping = kDamp * excessYawRate;
+    raw -= damping;
 
-    if (Math.abs(eLat) < this.deadbandLat && Math.abs(wrappedHeading) < this.deadbandHead) {
-      const scale = Math.min(Math.abs(eLat) / this.deadbandLat, Math.abs(wrappedHeading) / this.deadbandHead);
-      raw *= (scale * scale);
-    }
+    // 7. Actuator phase lead compensation
+    const rawDelta = raw - this.prevRaw;
+    const leadAlpha = 0.40 * (this.tauSteer / this.dt);
+    const leadRaw = raw + clamp(leadAlpha * rawDelta, -0.05, 0.05);
+    this.prevRaw = raw;
 
+    // 8. Actuator slew-rate limiting (speed-adaptive)
     const speedSlewFactor = clamp(1.0 - (v / 45.0) * 0.35, 0.65, 1.0);
     const maxStep = this.maxSlew * speedSlewFactor * this.dt;
-    const cmd = clamp(raw, -1.0, 1.0);
+    const cmd = clamp(leadRaw, -1.0, 1.0);
     this.steer = clamp(this.steer + clamp(cmd - this.steer, -maxStep, maxStep), -1.0, 1.0);
     return this.steer;
   }
@@ -2959,7 +2980,7 @@ function computePolicy(dt, proj) {
   if (!out.evasive && (adas.lka || out.alcActive)) {
     const latErr = egoLat - targetLat;
     const headingErr = wrapAngle(dyn.psi - proj.psi);
-    out.steer = lkaController.update(latErr, headingErr, lookaheadK, u, dyn.om);
+    out.steer = lkaController.update(latErr, headingErr, lookaheadK, u, dyn.om, dyn.w);
     out.lkaActive = !out.alcActive && Math.abs(latErr) > 0.015;
   }
 

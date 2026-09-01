@@ -715,7 +715,7 @@ export class AutonomousDrivingStack {
     // ── 8. Post-Curve Stabilized Stanley Path Follower (Zero Post-Turn Zigzag) ──
     const eLat = egoLat - targetLat;
     const ePsi = wrapAngle(egoPsi - roadPsi);
-    const steerCmd = this.lka.update(eLat, ePsi, lookaheadK, u, omega);
+    const steerCmd = this.lka.update(eLat, ePsi, lookaheadK, u, omega, egoState.w ?? egoState.vLat ?? 0);
 
     // ── 9. Deterministic 360° Safety Shield (Blind Spot Protection) ──
     const candidateCtrl = {
