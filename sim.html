@@ -169,7 +169,7 @@
   <div class="rule"></div>
   <div class="sub">HOST BUMPER CAM — RAY + RADIO PERCEPTION · CUSTOM TRACKS · ADAS</div>
   <div id="tele">—</div>
-  <div id="keys">[W/S] PEDALS · [A/D] STEER (V2V: LANE REQ) · [C] CAMERA POV · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
+  <div id="keys">[W/S] THROTTLE/BRAKE · [A/D] STEER · [C] CAMERA POV · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
 </header>
 <div id="alert"></div>
 
@@ -2083,10 +2083,10 @@ function castRay(ox, oy, oz, dx, dz, far) {
 function collectRayTargets() {
   rayTargets.length = 0;
   for (const ai of scenario) { ai.car.userData.tag = 'vehicle'; rayTargets.push(ai.car); }
-  for (const cc of crossCars) rayTargets.push(cc.car);
-  for (const m of T.obstacleMeshes) rayTargets.push(m);
-  if (T.wallMesh) rayTargets.push(T.wallMesh);
-  for (const rl of T.railMeshes) rayTargets.push(rl);
+  for (const cc of crossCars) { cc.car.userData.tag = 'vehicle'; rayTargets.push(cc.car); }
+  for (const m of T.obstacleMeshes) { m.userData.tag = m.userData.tag || 'obstacle'; rayTargets.push(m); }
+  if (T.wallMesh) { T.wallMesh.userData.tag = 'rail'; rayTargets.push(T.wallMesh); }
+  for (const rl of T.railMeshes) { rl.userData.tag = 'rail'; rayTargets.push(rl); }
 }
 let sensorVis = null;
 function makeSensorVisualizer() {
@@ -2377,11 +2377,27 @@ function updateSensors(et) {
     }
     if (matched) continue; // Ray belongs to an already known V2V/Fused vehicle, skip!
 
-    // Filter out non-vehicle hits (barrels, rails, obstacles, terrain)
-    if (h.tag !== 'vehicle' && h.tag !== 'car') continue;
-
     // Filter out hits on Ego body
     if (Math.hypot(h.x - dyn.x, h.z - dyn.z) < 2.5) continue;
+
+    // Static barrier / rail / obstacle → add as a zero-speed static object in perceived
+    // so the threat evaluator, IDM, and AEB can react to blocked paths
+    if (h.tag === 'rail' || h.tag === 'obstacle') {
+      const p2 = T.project(h.x, h.z, proj.idx);
+      // Only add if not already covered by a perceived vehicle within 2.5m
+      if (!SENS.perceived.some(p => Math.hypot(h.x - (p.wx ?? 0), h.z - (p.wz ?? 0)) < 2.5)) {
+        SENS.perceived.push({
+          src: 'local', s: p2.s, lat: p2.lat,
+          v: 0, vAlong: 0, braking: false, seen: true,
+          tag: h.tag, id: -1, wx: h.x, wz: h.z,
+          heading: dyn.psi, v2vAge: 0, isStatic: true
+        });
+      }
+      continue;
+    }
+
+    // Filter out unrecognised hits (terrain, sky, etc.)
+    if (h.tag !== 'vehicle' && h.tag !== 'car') continue;
 
     // Double-check against perceived list
     if (SENS.perceived.some(p => Math.hypot(h.x - p.wx, h.z - p.wz) < 4.5)) continue;
@@ -2597,6 +2613,35 @@ function evaluateThreats(ego, perceived, track, et) {
     const isAhead = relS > 0.1 || dyn2D.fwdDist > 0.1;
     const v2vAge = p.v2vAge ?? (et !== undefined && p.t !== undefined ? Math.max(0, et - p.t) : 0);
     const isFresh = (p.src === 'local') || (v2vAge < RISK_THRESHOLDS.V2V_STALE_AGE);
+    const isStatic = !!p.isStatic;
+
+    // Static barriers (rails, obstacles): synthesize a virtual TTC based on forward distance + ego speed
+    // so AEB and IDM treat them as blocking objects when directly in the path
+    if (isStatic) {
+      const fwd = dyn2D.fwdDist;
+      const lat = Math.abs(dyn2D.latOffset);
+      const isDirectlyAhead = fwd > 0.5 && fwd < 40.0 && lat < 2.2;
+      const isLateralHazard = fwd > -2.0 && fwd < 8.0 && lat < 3.5;
+      if (!isDirectlyAhead && !isLateralHazard) continue; // rail off to the side, ignore
+      const synthTTC = egoSpeed > 0.3 ? fwd / Math.max(egoSpeed, 0.3) : Infinity;
+      const railRisk = isDirectlyAhead
+        ? clamp((1.0 - fwd / 40.0) * (egoSpeed > 1.0 ? 1.0 : 0.4), 0, 0.92)
+        : 0.15; // lateral rail — low risk, just proximity awareness
+
+      threats.push({
+        id: -1, source: 'LOCAL', wx: p.wx, wz: p.wz,
+        s: p.s, lat: p.lat, v: 0, braking: false, seen: true,
+        tag: p.tag, distance: dyn2D.dist,
+        fwdDist: fwd, latOffset: dyn2D.latOffset,
+        relativeSpeed: -egoSpeed, closingSpeed: egoSpeed,
+        lane: pLane, heading: ego.psi, ttc: synthTTC,
+        isClosing: egoSpeed > 0.1, collisionRisk: railRisk,
+        trajectoryRisk: isDirectlyAhead ? 1.0 : 0.2,
+        v2vAge: 0, isAhead: isDirectlyAhead, isSameLane: isDirectlyAhead && lat < 1.85,
+        isStatic: true
+      });
+      continue;
+    }
 
     let collisionRisk = 0.0;
     if (isFresh && dyn2D.dist < 130.0) {
@@ -3093,7 +3138,7 @@ class LaneChangeStateMachine {
           this.startLat = egoLat;
           this.targetLat = track.laneLat ? track.laneLat('fwd', this.targetLane) : this.targetLane * 3.6;
           this.timer = 0.0;
-        } else if (this.timer > 2.5) {
+        } else if (this.timer > 1.5) {  // Reduced from 2.5s → 1.5s: give up faster on blocked target
           this.state = 'ABORT';
           this.intent = 'ABORT';
           this.timer = 0.0;
@@ -3127,17 +3172,17 @@ class LaneChangeStateMachine {
 
       case 'COMPLETE':
         this.currentLane = this.targetLane;
-        this.cooldown = 3.5;
+        this.cooldown = 1.8;  // Reduced from 3.5s — re-evaluate lane sooner after completing change
         this.state = 'KEEP_LANE';
         break;
 
       case 'ABORT': {
-        const tau = clamp(this.timer / 1.5, 0.0, 1.0);
+        const tau = clamp(this.timer / 1.2, 0.0, 1.0);  // Faster abort return (was 1.5s)
         const smoothU = tau * tau * (3 - 2 * tau);
         this.latPosition = this.startLat + (curCenter - this.startLat) * smoothU;
         if (tau >= 1.0) {
           this.latPosition = curCenter;
-          this.cooldown = 4.0;
+          this.cooldown = 2.0;  // Reduced from 4.0s — re-evaluate sooner after abort
           this.state = 'KEEP_LANE';
         }
         break;
@@ -3158,14 +3203,14 @@ class LaneKeepController {
   constructor(config = {}) {
     this.dt = config.dt ?? 1.0 / 30.0;
     this.wheelbase = config.wheelbase ?? 3.2;        // m
-    this.kUndersteer = config.kUndersteer ?? 0.16;   // s
-    this.tauSteer = config.tauSteer ?? 0.08;         // s (actuator lag)
-    this.tauFilt = config.tauFilt ?? 0.15;           // s (curvature filter time constant)
-    this.maxSlew = config.maxSlew ?? 6.0;            // Slew rate limit (rad/s)
-    this.ki = config.ki ?? 0.15;                     // Integral trim gain
-    this.iLimit = config.iLimit ?? 0.30;             // Anti-windup clamp (+/- 0.3)
-    this.deadbandLat = config.deadbandLat ?? 0.02;   // m (suppress micro-hunting)
-    this.deadbandHead = config.deadbandHead ?? 0.008;// rad
+    this.kUndersteer = config.kUndersteer ?? 0.14;   // s (slightly reduced for less steer feed)
+    this.tauSteer = config.tauSteer ?? 0.12;         // s (more phase lead — smooths actuator lag)
+    this.tauFilt = config.tauFilt ?? 0.28;           // s (slower kappa filter → smoother feedforward)
+    this.maxSlew = config.maxSlew ?? 3.5;            // Slew rate limit (was 6.0 — halved to stop oscillation)
+    this.ki = config.ki ?? 0.06;                     // Integral trim gain (was 0.15 — very reduced)
+    this.iLimit = config.iLimit ?? 0.20;             // Anti-windup clamp (was 0.30)
+    this.deadbandLat = config.deadbandLat ?? 0.08;   // m — wider band kills micro-hunting (was 0.02)
+    this.deadbandHead = config.deadbandHead ?? 0.012;// rad
     this.integral = 0.0;
     this.filteredKappa = 0.0;
     this.prevRaw = null;
@@ -3343,6 +3388,16 @@ function generateLongitudinalProposal(egoSpeed, cruiseSpeed, dt, highestRiskThre
   safeSpeed = clamp(safeSpeed, 0, MAX_AUTONOMOUS_SPEED);
   proposal.targetSpeed = safeSpeed;
 
+  // AUTO-RESUME: When car is stopped (u < 0.4 m/s) but path is now clear (safeSpeed > 1.0),
+  // kick-start the PID filteredTarget to avoid sluggish re-acceleration from cold zero.
+  // Without this, the 2.2 m/s²/tick ramp-up causes a long "creep delay" before re-engaging.
+  if (egoSpeed < 0.4 && safeSpeed > 1.5 && longPID.filteredTarget < 0.5) {
+    longPID.filteredTarget = 1.0;  // Prime the pump — equivalent to ~3.6 km/h starting speed
+    longPID.integral = 0.0;        // Reset integral wind-up from braking episode
+    proposal.alert = 'ACC · RESUMING — PATH CLEAR';
+    proposal.reason = 'RESUME';
+  }
+
   const pid = longPID.update(egoSpeed, safeSpeed, dt, 0);
   proposal.throttle = pid.throttle;
   proposal.brake = pid.brake;
@@ -3504,13 +3559,57 @@ function generateEmergencyAvoidanceProposal(egoLat, egoS, egoSpeed, highestRiskT
   const leftEval = evaluateLaneSafety(leftLane);
   const rightEval = evaluateLaneSafety(rightLane);
 
+  // V2V ONCOMING SAFETY CHECK — Before choosing LEFT evasion, query V2V BSM stream
+  // for any oncoming vehicle in the left corridor (opposite direction).
+  // "Oncoming" = heading differs > 120° from ego heading AND approaching from the front.
+  // This prevents the ego from swerving into oncoming traffic even when no local sensor covers it.
+  let leftBlockedByOncoming = false;
+  if (leftEval.safe || leftLane < 0) {
+    const egoPsiNow = dyn.psi ?? 0;
+    for (const bsm of (SENS.bsm || [])) {
+      // Compute heading delta — oncoming if > 120°
+      const headingDelta = Math.abs(wrapAngle(bsm.heading - egoPsiNow));
+      const isOncoming = headingDelta > (2 * Math.PI / 3); // > 120°
+      if (!isOncoming) continue;
+
+      // Check if this oncoming vehicle is roughly in the left corridor
+      const dx = bsm.x - dyn.x, dz = bsm.z - dyn.z;
+      const fwdU = -Math.sin(egoPsiNow), fwdV = -Math.cos(egoPsiNow);
+      const rightU = Math.cos(egoPsiNow), rightV = -Math.sin(egoPsiNow);
+      const fwdDist = dx * fwdU + dz * fwdV;
+      const latOff = dx * rightU + dz * rightV;
+
+      // Oncoming in front-left quadrant within danger zone
+      if (fwdDist > 0 && fwdDist < 60.0 && latOff < 1.0) {
+        const closingSpeed = bsm.v + Math.max(0, dyn.u ?? 0);
+        const ttcOncoming = closingSpeed > 0.2 ? fwdDist / closingSpeed : Infinity;
+        if (ttcOncoming < 6.0) {
+          leftBlockedByOncoming = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Also enforce: never go to opposite lane (leftLane < 0) unless:
+  //   a) Right lane is also unavailable (BRAKE_ONLY otherwise)
+  //   b) No oncoming V2V traffic detected
+  //   c) Ego speed is low enough (< 15 m/s = 54 km/h) to safely cross
+  const canUseLeftOpposite = leftLane < 0
+    ? (!leftBlockedByOncoming && (dyn.u ?? 0) < 15.0 && !rightEval.safe)
+    : true;
+
   let chosenDir = 'NONE';
-  if (leftEval.safe && rightEval.safe) {
-    chosenDir = leftEval.score >= rightEval.score ? 'LEFT' : 'RIGHT';
-  } else if (leftEval.safe) {
-    chosenDir = 'LEFT';
+  const leftActuallySafe = leftEval.safe && !leftBlockedByOncoming && canUseLeftOpposite;
+
+  if (leftActuallySafe && rightEval.safe) {
+    // Both sides clear — prefer the side with more space, but slightly bias toward RIGHT
+    // (stays on own side of road — only go left if clearly better)
+    chosenDir = leftEval.score > rightEval.score + 15 ? 'LEFT' : 'RIGHT';
   } else if (rightEval.safe) {
-    chosenDir = 'RIGHT';
+    chosenDir = 'RIGHT';  // Prefer right — stays on correct side of road
+  } else if (leftActuallySafe) {
+    chosenDir = 'LEFT';   // Only go left when right is blocked and left is safe (V2V-cleared)
   } else {
     chosenDir = 'BRAKE_ONLY';
   }
@@ -3519,17 +3618,21 @@ function generateEmergencyAvoidanceProposal(egoLat, egoS, egoSpeed, highestRiskT
     proposal.active = true;
     proposal.dir = chosenDir;
     proposal.reason = `EVASIVE_STEER_${chosenDir}`;
-    proposal.alert = `EMERGENCY EVASION · AVOIDING COLLISION (${chosenDir})`;
+    proposal.alert = leftBlockedByOncoming && chosenDir === 'LEFT'
+      ? `EMERGENCY EVASION · LEFT (V2V: ONCOMING CLEAR)`
+      : `EMERGENCY EVASION · AVOIDING COLLISION (${chosenDir})`;
     proposal.brake = 0.35;
     proposal.throttle = 0.0;
   } else if (chosenDir === 'BRAKE_ONLY') {
     // If no safe escape lane exists, enforce maximum straight-line emergency braking
     proposal.active = true;
     proposal.dir = 'BRAKE_ONLY';
-    proposal.reason = 'EMERGENCY_BRAKE_LOCKED_LANE';
+    proposal.reason = leftBlockedByOncoming ? 'EMERGENCY_BRAKE_ONCOMING_V2V_BLOCKED' : 'EMERGENCY_BRAKE_LOCKED_LANE';
     proposal.brake = 1.0;
     proposal.throttle = 0.0;
-    proposal.alert = 'EMERGENCY BRAKE · ESCAPE PATHS BLOCKED';
+    proposal.alert = leftBlockedByOncoming
+      ? 'EMERGENCY BRAKE · ONCOMING V2V TRAFFIC — LEFT BLOCKED'
+      : 'EMERGENCY BRAKE · ESCAPE PATHS BLOCKED';
   }
 
   return proposal;
@@ -4221,7 +4324,7 @@ function initUI(env) {
     let hint = '';
     if (isDriving) hint = 'DRIVING MODE · WASD PEDALS & STEERING · FULL PHYSICS';
     else if (isPerception) hint = 'PERCEPTION MODE · SENSOR RAYCASTS · RADAR SWEEP · CAMERA FEED';
-    else if (isV2v) hint = 'V2V AUTONOMOUS MODE · ADAS AUTOPILOT · W/S = CRUISE · A/D = LANE CHANGE';
+    else if (isV2v) hint = 'V2V CO-PILOT ASSIST · WASD DRIVER CONTROL · V2V SAFETY SUPERVISOR ACTIVE';
     else if (isDebug) hint = 'DEBUG TELEMETRY · TIRE FRICTION CIRCLES · SLIP ANGLES · FORCES';
     else if (m === 'rl_train') hint = 'RL TRAINING MODE · CONNECT PYTHON TRAINER VIA WEBSOCKET';
     else if (m === 'rl_eval') hint = 'RL EVALUATION MODE · RUNNING RL POLICY ON PERCEPTION OBS';
