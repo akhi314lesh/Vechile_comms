@@ -17,9 +17,7 @@
 import { clamp, createRNG } from './utils.js';
 import { safeCurveSpeed } from './physics.js';
 
-/* ================================================================
-   NORMAL BEHAVIOR
-   ================================================================ */
+/* NORMAL BEHAVIOR*/
 
 /**
  * Normal vehicle: constant desired speed, normal road-following,
@@ -99,9 +97,7 @@ export function computeNormalBehavior(vehicle, dt, context) {
   return { desiredSpeed: want, braking: want < vehicle.v - 2.5 };
 }
 
-/* ================================================================
-   ERRATIC BEHAVIOR
-   ================================================================ */
+/* ERRATIC BEHAVIOR*/
 
 /**
  * Erratic vehicle state — tracks current perturbation.
@@ -192,9 +188,7 @@ export function computeErraticBehavior(vehicle, dt, context) {
   return { desiredSpeed: want, braking };
 }
 
-/* ================================================================
-   BEHAVIOR DISPATCHER
-   ================================================================ */
+/* BEHAVIOR DISPATCHER*/
 
 /**
  * Compute behavior for a vehicle based on its behavior type.

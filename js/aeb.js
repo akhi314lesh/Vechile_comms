@@ -1,4 +1,4 @@
-/* =====================================================================
+/* 
  * js/aeb.js — Autonomous Emergency Braking + 360° collision-avoidance shield
  *
  * Rays  : 36 @ 10°, index 0 = dead ahead.  1..17 right (9 = 90°R),
@@ -8,7 +8,7 @@
  *        35 (−10°)   1 (+10°)
  *      27 (−90°)       9 (+90°)      ← blind-spot flanks
  *              18 (rear)
- * ===================================================================== */
+ */
 
 export const AEB = {
   CRIT_DIST:          6.5,   // m — hard stop below this forward distance

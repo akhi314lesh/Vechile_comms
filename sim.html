@@ -113,6 +113,25 @@
     color: rgba(150,178,204,0.5); }
   #mapTick { position: absolute; left: calc(50% - 7px); top: -4px; width: 14px; height: 11px;
     background: #ffb454; clip-path: polygon(50% 100%, 0 0, 100% 0); transform-origin: 7px 124px; }
+  #radarWrap { position: fixed; left: 20px; bottom: 20px; width: 230px; height: 230px; z-index: 12;
+    pointer-events: auto; background: rgba(5, 9, 18, 0.82); backdrop-filter: blur(8px);
+    border: 1px solid rgba(0, 229, 255, 0.40); border-radius: 10px;
+    box-shadow: inset 0 0 25px rgba(0, 180, 255, 0.08), 0 8px 32px rgba(0,0,0,0.65); }
+  #radarWrap::before { content: ''; position: absolute; top: -1px; left: -1px; width: 18px; height: 18px;
+    border-top: 2px solid rgba(0, 229, 255, 0.9); border-left: 2px solid rgba(0, 229, 255, 0.9);
+    border-top-left-radius: 10px; }
+  #radarWrap::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 18px; height: 18px;
+    border-bottom: 2px solid rgba(0, 229, 255, 0.9); border-right: 2px solid rgba(0, 229, 255, 0.9);
+    border-bottom-right-radius: 10px; }
+  #radarHeader { position: absolute; top: 6px; left: 8px; font-size: 8px; letter-spacing: 1.5px;
+    color: rgba(180, 230, 255, 0.9); font-weight: 700; pointer-events: none; }
+  #radarCap { position: absolute; bottom: 6px; left: 8px; font-size: 8px; letter-spacing: 1.2px;
+    color: rgba(140, 190, 230, 0.6); pointer-events: none; }
+  #radarCanvas { position: absolute; inset: 0; width: 230px; height: 230px; cursor: crosshair; }
+  #radarTooltip { display: none; position: absolute; bottom: 22px; left: 6px; right: 6px;
+    background: rgba(3, 7, 15, 0.95); border: 1px solid rgba(0, 229, 255, 0.45);
+    border-radius: 5px; padding: 6px 8px; font-size: 8px; line-height: 1.45;
+    color: #dff0ff; pointer-events: none; z-index: 25; box-shadow: 0 4px 16px rgba(0,0,0,0.8); }
   #editor { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
     background: rgba(3,5,10,.62); }
   .edCard { background: rgba(7,11,20,.95); border: 1px solid rgba(130,190,235,.3); border-radius: 10px;
@@ -150,7 +169,7 @@
   <div class="rule"></div>
   <div class="sub">HOST BUMPER CAM — RAY + RADIO PERCEPTION · CUSTOM TRACKS · ADAS</div>
   <div id="tele">—</div>
-  <div id="keys">[W/S] PEDALS · [A/D] ANALOGUE STEER (V2V: LANE REQUEST) · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
+  <div id="keys">[W/S] PEDALS · [A/D] STEER (V2V: LANE REQ) · [C] CAMERA POV · [V] MODE · [E] EDITOR · [R] RESET · [B] HAZARD · [H] LIGHTS</div>
 </header>
 <div id="alert"></div>
 
@@ -159,11 +178,39 @@
   <div class="sec">
     <label>DRIVE MODE</label>
     <div class="seg">
-      <button id="mManual" class="btn on">MANUAL</button>
-      <button id="mV2v" class="btn">V2V ASSIST</button>
+      <button id="mDriving" class="btn on">DRIVING</button>
+      <button id="mPerception" class="btn">PERCEPTION</button>
+      <button id="mV2v" class="btn">V2V</button>
+      <button id="mDebug" class="btn">DEBUG</button>
     </div>
+    <div class="crow"><span>CAMERA POV</span><button id="povTgl" class="tgl on">CHASE</button></div>
     <div class="crow"><span>DRIVER AIDS · ESC+ABS+EBD</span><button id="aidsTgl" class="tgl on">ON</button></div>
-    <div class="hint" id="modeHint">EYES ONLY · TOGGLE AIDS OFF FOR FULLY RAW PHYSICS</div>
+    <div class="hint" id="modeHint">WASD TO DRIVE · AIDS TOGGLEABLE · C = TOGGLE POV</div>
+  </div>
+  <div class="sec" id="rlSec" style="display:none">
+    <label>RL AGENT CONTROLS</label>
+    <div class="crow"><span>STAGE</span>
+      <select id="rlStageSel">
+        <option value="1">1: EMPTY ROAD</option>
+        <option value="2">2: NORMAL TRAFFIC</option>
+        <option value="3">3: SUDDEN BRAKING</option>
+        <option value="4">4: ERRATIC TRAFFIC</option>
+        <option value="5">5: OCCLUSION (NO V2V)</option>
+        <option value="6" selected>6: OCCLUSION + V2V</option>
+        <option value="7">7: FULL MIXED</option>
+      </select>
+    </div>
+    <div class="crow"><span>V2V RADIO</span><button id="rlV2vTgl" class="tgl on">ON</button></div>
+    <div class="crow"><span>WS TRAINER</span><span id="rlWsStatus" style="font-size:9px;color:#ffb454">DISCONNECTED</span></div>
+    <div class="brow">
+      <button class="btn" id="btnConnectWs">CONNECT WS</button>
+      <button class="btn" id="btnRlReset">RESET SEED</button>
+    </div>
+    <div class="slabel">RL METRICS</div>
+    <div class="srow" id="rlMetricReward">EP REWARD · 0.0</div>
+    <div class="srow" id="rlMetricSteps">STEPS · 0 / 2000</div>
+    <div class="srow" id="rlMetricTTC">MIN TTC · —</div>
+    <div class="srow" id="rlMetricCol">COLLISION · NO</div>
   </div>
   <div class="sec" id="adasSec">
     <label>ADAS FEATURES</label>
@@ -171,6 +218,8 @@
     <div class="arow"><span>AUTO BRAKE · SENSED</span><button class="tgl on" id="aebTgl">ON</button></div>
     <div class="arow"><span>CURVE GOVERNOR</span><button class="tgl on" id="govTgl">ON</button></div>
     <div class="arow"><span>AUTO LANE CHANGE</span><button class="tgl on" id="alcTgl">ON</button></div>
+    <div class="arow"><span>3D TOP-DOWN MAP</span><button class="tgl on" id="minimap3dTgl">ON</button></div>
+    <div class="arow"><span>V2V TACTICAL RADAR</span><button class="tgl on" id="radarTgl">ON</button></div>
     <div class="hint">ACTIVE IN V2V MODE · A/D = REQUEST LANE CHANGE · V2V RADIO AVOIDANCE (LOS + OCCLUDED) RUNS REGARDLESS</div>
   </div>
   <div class="sec" id="sensorSec">
@@ -188,7 +237,14 @@
       v2vScene.policy = fn(frame, api) ⇒ {steer, throttle, brake} TO REPLACE IT</div>
   </div>
   <div class="sec">
-    <label>TRACK</label>
+    <label>ENVIRONMENT &amp; TRACK</label>
+    <div class="crow"><span>TIME OF DAY</span>
+      <div class="seg" id="timeSeg" style="flex:1;margin-left:8px">
+        <button class="btn on" id="todNight">NIGHT</button>
+        <button class="btn" id="todDawn">DAWN</button>
+        <button class="btn" id="todDay">DAY</button>
+      </div>
+    </div>
     <div class="crow"><span>FORWARD LANES</span>
       <span class="stp"><button id="lfMinus">–</button><span class="val" id="lfVal">2</span><button id="lfPlus">+</button></span></div>
     <div class="crow"><span>ONCOMING LANES</span>
@@ -199,11 +255,16 @@
         <option value="outside">OUTSIDE CURVE</option>
         <option value="off">OFF</option>
       </select></div>
-    <div class="crow"><span>FOG</span><span style="flex:1;margin-left:8px"><input type="range" id="fogRange" min="0.004" max="0.09" step="0.001" value="0.02"></span></div>
+    <div class="crow"><span>FOG</span><span style="flex:1;margin-left:8px"><input type="range" id="fogRange" min="0.002" max="0.08" step="0.001" value="0.02"></span></div>
     <div class="brow"><button class="btn" id="btnEdit">EDIT TRACK · E</button><button class="btn" id="btnDefault">DEFAULT</button></div>
   </div>
   <div class="sec">
-    <label>VEHICLES <button class="btn" id="addVeh">+ ADD</button></label>
+    <label>VEHICLES</label>
+    <div class="brow" style="margin-bottom:6px">
+      <button class="btn" id="addVeh">+ ADD</button>
+      <button class="btn" id="btnDense">DENSE TRAFFIC</button>
+      <button class="btn" id="btnClearVeh">CLEAR</button>
+    </div>
     <div id="vlist"></div>
     <div class="hint">RF = V2V RADIO · RF-OFF CARS + OBSTACLES + CROSS TRAFFIC ARE RADIO-INVISIBLE (RAY-SENSED ONLY)</div>
   </div>
@@ -215,8 +276,15 @@
 
 <div id="mapWrap">
   <div id="mapN">N</div>
-  <div id="mapCap">RADAR · 100 M</div>
+  <div id="mapCap">3D MAP · 100 M</div>
   <div id="mapTick"></div>
+</div>
+
+<div id="radarWrap">
+  <canvas id="radarCanvas" width="230" height="230"></canvas>
+  <div id="radarHeader">V2V TACTICAL RADAR</div>
+  <div id="radarCap">80 M · EGO-CENTERED</div>
+  <div id="radarTooltip"></div>
 </div>
 
 <div id="editor">
@@ -275,6 +343,406 @@
 <script type="module">
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+/* ================================================================
+   [RL ENVIRONMENT & WEBSOCKET CLIENT] (Self-contained for file:/// & http://)
+   ================================================================ */
+class RLWebSocketClient {
+  constructor(env, url = 'ws://localhost:8765') {
+    this.env = env;
+    this.url = url;
+    this.ws = null;
+    this.connected = false;
+    this.onStatusChange = null;
+  }
+  connect() {
+    return new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(this.url);
+      } catch (e) { reject(e); return; }
+      this.ws.onopen = () => {
+        this.connected = true;
+        if (this.onStatusChange) this.onStatusChange('connected');
+        this.ws.send(JSON.stringify({
+          type: 'env_info',
+          observationSize: 97,
+          actionSize: 3,
+          actionNames: ['steering', 'throttle', 'brake'],
+          actionLow: [-1, 0, 0],
+          actionHigh: [1, 1, 1]
+        }));
+        resolve();
+      };
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this._handleMessage(msg);
+        } catch (e) { console.error('[RL-WS] Parse error:', e); }
+      };
+      this.ws.onclose = () => {
+        this.connected = false;
+        if (this.onStatusChange) this.onStatusChange('disconnected');
+      };
+      this.ws.onerror = (e) => {
+        this.connected = false;
+        if (this.onStatusChange) this.onStatusChange('error');
+        reject(e);
+      };
+    });
+  }
+  disconnect() {
+    if (this.ws) { this.ws.close(); this.ws = null; this.connected = false; }
+  }
+  _handleMessage(msg) {
+    switch (msg.type) {
+      case 'reset': {
+        const obs = this.env.reset(msg.seed ?? undefined);
+        this._send({ type: 'obs', observation: Array.from(obs), reward: 0, done: false, truncated: false, info: { step: 0 } });
+        break;
+      }
+      case 'step': {
+        const result = this.env.step(msg.action);
+        this._send({
+          type: 'obs',
+          observation: Array.from(result.observation),
+          reward: result.reward,
+          done: result.done,
+          truncated: result.truncated,
+          info: result.info
+        });
+        break;
+      }
+      case 'get_metrics': {
+        this._send({ type: 'metrics', data: this.env.getMetrics() });
+        break;
+      }
+      case 'set_curriculum': {
+        this.env.curriculumStage = msg.stage ?? 1;
+        this._send({ type: 'ack', msg: `curriculum set to stage ${msg.stage}` });
+        break;
+      }
+      case 'set_v2v': {
+        this.env.v2vEnabled = !!msg.enabled;
+        this._send({ type: 'ack', msg: `v2v ${msg.enabled ? 'enabled' : 'disabled'}` });
+        break;
+      }
+      case 'ping': {
+        this._send({ type: 'pong' });
+        break;
+      }
+    }
+  }
+  _send(data) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+}
+
+function createRNG(seed) {
+  let s = (seed | 0) || 12345;
+  return {
+    random() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; },
+    randFloat(min, max) { return min + this.random() * (max - min); },
+    randInt(min, max) { return min + Math.floor(this.random() * (max - min + 1)); },
+    chance(p) { return this.random() < p; },
+    pick(arr) { return arr[Math.floor(this.random() * arr.length)]; }
+  };
+}
+
+const SCENARIO_PAINTS = [0x39404a, 0x9aa2ac, 0xc9ced4, 0x59626e, 0x7f8894, 0xe8631e, 0x3a5f8c, 0x8c3a3a];
+
+function makeScenarioVehicle(rng, overrides = {}) {
+  return {
+    id: rng.randInt(1, 99999),
+    name: overrides.name ?? `CAR ${rng.randInt(1, 99)}`,
+    dir: overrides.dir ?? 'fwd',
+    lane: overrides.lane ?? 0,
+    spawnU: overrides.spawnU ?? rng.randFloat(0.1, 0.9),
+    speed: overrides.speed ?? rng.randFloat(8, 18),
+    behavior: overrides.behavior ?? 'normal',
+    radio: overrides.radio ?? true,
+    hatch: overrides.hatch ?? rng.chance(0.5),
+    paint: overrides.paint ?? rng.pick(SCENARIO_PAINTS),
+    ...overrides
+  };
+}
+
+function generateScenario(seed, stage = 1) {
+  const rng = createRNG(seed);
+  const scenario = {
+    seed, stage, egoV2V: true, vehicles: [],
+    egoSpawnU: rng.randFloat(0.04, 0.12),
+    tags: { v2vEnabled: true, hasErratic: false, hasOccluded: false }
+  };
+  if (stage === 1) {
+    const n = rng.randInt(1, 2);
+    for (let i = 0; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: 'normal', radio: true,
+        speed: rng.randFloat(10, 16),
+        spawnU: rng.randFloat(0.25 + i * 0.18, 0.45 + i * 0.18)
+      }));
+    }
+  } else if (stage === 2) {
+    const n = rng.randInt(2, 4);
+    for (let i = 0; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: 'normal', radio: true,
+        speed: rng.randFloat(6, 22), lane: rng.randInt(0, 1),
+        spawnU: rng.randFloat(0.15 + i * 0.12, 0.35 + i * 0.15)
+      }));
+    }
+  } else if (stage === 3) {
+    const n = rng.randInt(2, 4);
+    for (let i = 0; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: (i === 0 || rng.chance(0.4)) ? 'brake' : 'normal',
+        radio: true, speed: rng.randFloat(10, 18),
+        spawnU: rng.randFloat(0.15 + i * 0.1, 0.3 + i * 0.15)
+      }));
+    }
+  } else if (stage === 4) {
+    const n = rng.randInt(2, 4);
+    scenario.tags.hasErratic = true;
+    for (let i = 0; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: (i === 0 || rng.chance(0.5)) ? 'erratic' : 'normal',
+        radio: true, speed: rng.randFloat(8, 20),
+        spawnU: rng.randFloat(0.15 + i * 0.1, 0.35 + i * 0.15)
+      }));
+    }
+  } else if (stage === 5) {
+    const n = rng.randInt(2, 5);
+    scenario.tags.hasOccluded = true;
+    scenario.tags.v2vEnabled = false;
+    scenario.egoV2V = false;
+    scenario.vehicles.push(makeScenarioVehicle(rng, {
+      name: 'OCCLUDED', behavior: rng.chance(0.5) ? 'stopped' : 'normal',
+      radio: false, speed: rng.randFloat(0, 10),
+      spawnU: rng.randFloat(0.35, 0.55), lane: 0
+    }));
+    for (let i = 1; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: 'normal', radio: false, speed: rng.randFloat(10, 16),
+        spawnU: rng.randFloat(0.15 + i * 0.1, 0.35 + i * 0.12)
+      }));
+    }
+  } else if (stage === 6) {
+    const n = rng.randInt(3, 5);
+    scenario.tags.hasOccluded = true;
+    scenario.tags.v2vEnabled = true;
+    scenario.egoV2V = true;
+    scenario.vehicles.push(makeScenarioVehicle(rng, {
+      name: 'V2V-OCCLUDED', behavior: rng.chance(0.4) ? 'erratic' : rng.chance(0.5) ? 'stopped' : 'brake',
+      radio: true, speed: rng.randFloat(0, 14),
+      spawnU: rng.randFloat(0.35, 0.55), lane: 0
+    }));
+    for (let i = 1; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: 'normal', radio: rng.chance(0.7), speed: rng.randFloat(10, 18),
+        spawnU: rng.randFloat(0.15 + i * 0.1, 0.35 + i * 0.12)
+      }));
+    }
+  } else {
+    const n = rng.randInt(3, 6);
+    scenario.tags.v2vEnabled = rng.chance(0.7);
+    scenario.egoV2V = scenario.tags.v2vEnabled;
+    for (let i = 0; i < n; i++) {
+      scenario.vehicles.push(makeScenarioVehicle(rng, {
+        behavior: rng.pick(['normal', 'normal', 'erratic', 'brake', 'stopped']),
+        radio: rng.chance(0.5), speed: rng.randFloat(5, 22),
+        spawnU: rng.randFloat(0.1 + i * 0.08, 0.25 + i * 0.1)
+      }));
+    }
+  }
+  return scenario;
+}
+
+class V2VRLEnvironment {
+  constructor(config = {}) {
+    this.maxSteps = config.maxSteps ?? 2000;
+    this.v2vEnabled = config.v2vEnabled ?? true;
+    this.curriculumStage = config.curriculumStage ?? 1;
+    this.dt = 1 / 30;
+    this.sim = null;
+    this.stepNum = 0;
+    this.episodeNum = 0;
+    this.totalReward = 0;
+    this.prevAction = null;
+    this.lastCtrl = { steer: 0, throttle: 0, brake: 0 };
+    this.currentObs = new Float32Array(97);
+  }
+  connectToSim(simRef) {
+    this.sim = simRef;
+  }
+  reset(seed) {
+    this.episodeNum++;
+    this.stepNum = 0;
+    this.totalReward = 0;
+    this.prevAction = null;
+    this.lastCtrl = { steer: 0, throttle: 0, brake: 0 };
+
+    const s = seed ?? (this.episodeNum * 7919 + 42);
+    if (this.sim) {
+      if (this.sim.resetWithScenario) {
+        const scenarioCfg = generateScenario(s, this.curriculumStage);
+        this.sim.resetWithScenario(scenarioCfg);
+      } else if (this.sim.resetRun) {
+        this.sim.resetRun();
+      }
+    }
+    if (typeof resetRun === 'function') resetRun();
+
+    this.currentObs = this._buildObs();
+    return this.currentObs;
+  }
+  step(action) {
+    this.stepNum++;
+    const ctrl = {
+      steer: clamp(action.steering ?? action.steer ?? 0, -1, 1),
+      throttle: clamp(action.throttle ?? 0, 0, 1),
+      brake: clamp(action.brake ?? 0, 0, 1)
+    };
+    this.lastCtrl = ctrl;
+
+    const dynObj = this.sim ? this.sim.dyn : null;
+    const trackObj = this.sim ? this.sim.track : null;
+
+    // Apply control to vehicle dynamics
+    if (dynObj && trackObj) {
+      const proj = trackObj.project(dynObj.x, dynObj.z, 0);
+      const onP = Math.abs(proj.lat) < (trackObj.metrics?.pavedHalf ?? 10) + 0.35;
+      const env = { mu: onP ? 0.92 : 0.5, offroad: !onP, abs: true, esc: true };
+      for (let i = 0; i < 4; i++) {
+        dynObj.step(1 / 120, ctrl, env);
+      }
+    }
+
+    // Step AI vehicles so traffic moves during RL training
+    if (this.sim && this.sim.updateAIVehicles) {
+      this.sim.updateAIVehicles(1 / 30);
+    }
+
+    // Check collisions & calculate distances (ignore during first 3 steps of spawn)
+    let collision = false;
+    let collisionType = '';
+    let minDist = 99;
+    let minTTC = 99;
+    if (dynObj && this.sim && this.sim.scenario && this.stepNum > 3) {
+      const A = { x: dynObj.x, z: dynObj.z, psi: dynObj.psi, hl: 2.35, hw: 0.92 };
+      for (const ai of this.sim.scenario) {
+        const ax = ai.car?.position?.x ?? 0, az = ai.car?.position?.z ?? 0;
+        const d = Math.hypot(ax - dynObj.x, az - dynObj.z) - 4.7;
+        if (d < minDist) minDist = d;
+        const closing = Math.abs(dynObj.u) - (ai.v ?? 0);
+        if (closing > 0.25 && d > 0) {
+          const ttc = d / closing;
+          if (ttc < minTTC) minTTC = ttc;
+        }
+        if (obbOverlap2D(A, { x: ax, z: az, psi: ai.psi ?? 0, hl: 2.35, hw: 0.92 })) {
+          collision = true;
+          collisionType = `vehicle:${ai.name}`;
+        }
+      }
+    }
+
+    const u = Math.abs(dynObj?.u ?? 0);
+    let reward = 0;
+    if (collision) {
+      reward = -100;
+    } else {
+      reward += (u / 14) * 0.4;
+      if (minTTC < 2.0) reward -= (2.0 - minTTC) * 0.5;
+      if (minDist < 3.0) reward -= (3.0 - minDist) * 0.3;
+      reward -= Math.abs(ctrl.steer) * 0.05;
+    }
+    this.totalReward += reward;
+
+    const done = collision || this.stepNum >= this.maxSteps;
+
+    // Update UI DOM
+    const elR = document.getElementById('rlMetricReward');
+    if (elR) elR.textContent = `EP REWARD · ${this.totalReward.toFixed(1)}`;
+    const elS = document.getElementById('rlMetricSteps');
+    if (elS) elS.textContent = `STEPS · ${this.stepNum} / ${this.maxSteps}`;
+    const elT = document.getElementById('rlMetricTTC');
+    if (elT) elT.textContent = `MIN TTC · ${minTTC < 20 ? minTTC.toFixed(1) + 's' : '—'}`;
+    const elC = document.getElementById('rlMetricCol');
+    if (elC) {
+      elC.textContent = `COLLISION · ${collision ? 'YES' : 'NO'}`;
+      elC.style.color = collision ? '#ff5340' : '#69f0ae';
+    }
+
+    this.currentObs = this._buildObs();
+
+    return {
+      observation: this.currentObs,
+      reward,
+      done,
+      truncated: this.stepNum >= this.maxSteps,
+      info: { collision, minTTC, speed: u, step: this.stepNum }
+    };
+  }
+  _buildObs() {
+    const obs = new Float32Array(97);
+    const d = this.sim ? this.sim.dyn : null;
+    if (!d) return obs;
+    const trackObj = this.sim ? this.sim.track : null;
+    const proj = trackObj ? trackObj.project(d.x, d.z, 0) : null;
+    
+    // Ego State (9 features: 0..8)
+    obs[0] = clamp(Math.abs(d.u) / 50, 0, 1);
+    obs[1] = clamp(d.ax / 12, -1, 1);
+    obs[2] = clamp(d.ay / 12, -1, 1);
+    obs[3] = clamp(d.om / 2.6, -1, 1);
+    obs[4] = clamp((d.beta || 0) / 0.5, -1, 1);
+    obs[5] = clamp((proj ? proj.lat : 0) / 5, -1, 1);
+    obs[6] = clamp(this.lastCtrl.steer, -1, 1);
+    obs[7] = clamp(this.lastCtrl.throttle, 0, 1);
+    obs[8] = clamp(this.lastCtrl.brake, 0, 1);
+
+    // Road Info (4 features: 9..12)
+    obs[9] = clamp((proj ? proj.kappa : 0) / 0.1, -1, 1);
+    obs[10] = clamp((trackObj?.def?.lanesF ?? 2) / 4, 0, 1);
+    obs[11] = clamp((trackObj?.def?.lanesO ?? 2) / 4, 0, 1);
+    obs[12] = 0; // signal distance
+
+    // Perceived objects (12 objects x 7 features = 84 features: 13..96)
+    const perc = (SENS.perceived || []).slice().sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
+    const cosPsi = Math.cos(d.psi), sinPsi = Math.sin(d.psi);
+    for (let i = 0; i < 12; i++) {
+      const base = 13 + i * 7;
+      if (i < perc.length) {
+        const p = perc[i];
+        const dx = (p.wx ?? 0) - d.x;
+        const dz = (p.wz ?? 0) - d.z;
+        const relX = dx * cosPsi - dz * sinPsi;
+        const relZ = -dx * sinPsi - dz * cosPsi;
+        const dist = Math.hypot(relX, relZ);
+        obs[base + 0] = clamp(relX / 250, -1, 1);
+        obs[base + 1] = clamp(relZ / 250, -1, 1);
+        obs[base + 2] = clamp(((p.v ?? 0) - d.u) / 60, -1, 1);
+        obs[base + 3] = clamp(dist / 250, 0, 1);
+        obs[base + 4] = p.braking ? 1.0 : 0.0;
+        obs[base + 5] = p.src === 'v2v+local' ? 1.0 : p.src === 'v2v' ? 0.5 : 0.0;
+        obs[base + 6] = clamp((p.messageAge ?? 0) / 2.0, 0, 1);
+      } else {
+        obs[base + 0] = 0;
+        obs[base + 1] = 0;
+        obs[base + 2] = 0;
+        obs[base + 3] = 1.0; // max distance for empty slot
+        obs[base + 4] = 0;
+        obs[base + 5] = 0;
+        obs[base + 6] = 0;
+      }
+    }
+    return obs;
+  }
+  getMetrics() {
+    return { episode: this.episodeNum, reward: this.totalReward, steps: this.stepNum };
+  }
+}
 
 const clamp = THREE.MathUtils.clamp;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -601,7 +1069,12 @@ class VehicleDynamics {
 
     if (kin > 0) {
       const k2 = kin * (1 - Math.exp(-dt * 10));
-      const omK = this.u * Math.tan(d) / this.L;
+      let uSteer = this.u;
+      if (Math.abs(ctrl.throttle || 0) > 0.05 && Math.abs(ctrl.steer || 0) > 0.05) {
+        const uDir = (ctrl.throttle || 0) >= 0 ? 1 : -1;
+        uSteer = uDir * Math.max(Math.abs(this.u), 2.8 * Math.abs(ctrl.throttle || 0));
+      }
+      const omK = uSteer * Math.tan(d) / this.L;
       this.om += (omK - this.om) * k2;
       this.w *= 1 - k2;
       if (Math.abs(this.u) < 0.35 && Math.abs(ctrl.throttle) < 0.05) {
@@ -708,16 +1181,36 @@ function makeRoadTex(def, met) {
       for (let k = 0; k < 6; k++) { x += (Math.random() - .5) * 60; y += (Math.random() - .5) * 80; ctx.lineTo(x, y); }
       ctx.stroke();
     }
-    const W = 'rgba(226,229,233,0.92)', Y = 'rgba(214,171,64,0.95)';
-    const solid = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.06), 0, 0.12 * m2px, h); };
-    const dash = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.06), 0, 0.12 * m2px, 170); };
-    solid(-met.pavedHalf + 0.25, W); solid(met.pavedHalf - 0.25, W);
+    // Lane marking colors — bright and highly visible
+    const W = 'rgba(245,248,252,1.0)', Y = 'rgba(255,200,60,1.0)';
+    // Thick solid edge line (0.18m wide)
+    const solidThick = (m, col) => { ctx.fillStyle = col; ctx.fillRect(X(m - 0.09), 0, 0.18 * m2px, h); };
+    // Double solid line for center divider (two lines with gap)
+    const doubleSolid = (m, col) => {
+      ctx.fillStyle = col;
+      ctx.fillRect(X(m - 0.28), 0, 0.12 * m2px, h);
+      ctx.fillRect(X(m + 0.16), 0, 0.12 * m2px, h);
+    };
+    // Dashed lane separator — thick bright dashes (0.15m wide, covers 60% of texture height)
+    const dashThick = (m, col) => {
+      ctx.fillStyle = col;
+      // Two dashes per tile (each 150px long with 106px gap = 512px total)
+      ctx.fillRect(X(m - 0.075), 0, 0.15 * m2px, 150);
+      ctx.fillRect(X(m - 0.075), 256, 0.15 * m2px, 150);
+    };
+
+    // Edge lines (solid white on both sides of pavement)
+    solidThick(-met.pavedHalf + 0.25, W); solidThick(met.pavedHalf - 0.25, W);
+
     if (def.lanesO > 0) {
-      solid(-0.2, Y); solid(0.2, Y);
-      for (let i = 1; i < def.lanesF; i++) dash(i * CFG.laneW, W);
-      for (let i = 1; i < def.lanesO; i++) dash(-i * CFG.laneW, W);
+      // Center divider — double yellow solid lines
+      doubleSolid(0, Y);
+      // Same-direction lane separators — thick white dashed
+      for (let i = 1; i < def.lanesF; i++) dashThick(i * CFG.laneW, W);
+      for (let i = 1; i < def.lanesO; i++) dashThick(-i * CFG.laneW, W);
     } else {
-      for (let i = 1; i < def.lanesF; i++) dash(-met.pavedHalf + i * CFG.laneW, W);
+      // One-direction road — thick white dashed lane separators
+      for (let i = 1; i < def.lanesF; i++) dashThick(-met.pavedHalf + i * CFG.laneW, W);
     }
   });
 }
@@ -1222,9 +1715,11 @@ function buildTrack(scene, def, assets, skyGroup, oldT, createAIFn) {
         geos.push(g);
       }
       if (!geos.length) return;
+      const currentTOD = typeof currentTimeOfDay !== 'undefined' ? currentTimeOfDay : 'night';
+      const bEmiss = (typeof TIME_OF_DAY_PRESETS !== 'undefined' && TIME_OF_DAY_PRESETS[currentTOD]) ? TIME_OF_DAY_PRESETS[currentTOD].buildingEmissive : 1.0;
       const mat = new THREE.MeshStandardMaterial({
-        color: 0x04060c, emissive: 0xffffff, emissiveMap: tex,
-        emissiveIntensity: ti === 0 ? 1.15 : 0.55, roughness: 1, fog: ti === 0
+        color: 0x222834, emissive: 0xffffff, emissiveMap: tex,
+        emissiveIntensity: (ti === 0 ? 1.0 : 0.45) * bEmiss, roughness: 0.9, metalness: 0.1, fog: true
       });
       disposeMats.push(mat);
       group.add(new THREE.Mesh(mergeGeometries(geos), mat));
@@ -1557,7 +2052,7 @@ const ULTRA_LABELS = ['F', 'FL', 'FR', 'L', 'R', 'RR'];
 const SENS = {
   on: true, v2vRange: 250,
   radar: { far: 160, nearest: null },
-  ultra: { far: 7, dist: new Array(ULTRA_DIRS.length).fill(7), types: new Array(ULTRA_DIRS.length).fill('clear') },
+  ultra: { far: 30, dist: new Array(ULTRA_DIRS.length).fill(30), types: new Array(ULTRA_DIRS.length).fill('clear') },
   bsm: [], perceived: [], localTracks: [],
   imu: {}, signal: null,
   camRT: new THREE.WebGLRenderTarget(CAM_W, CAM_H),
@@ -1593,6 +2088,156 @@ function collectRayTargets() {
   if (T.wallMesh) rayTargets.push(T.wallMesh);
   for (const rl of T.railMeshes) rayTargets.push(rl);
 }
+let sensorVis = null;
+function makeSensorVisualizer() {
+  const group = new THREE.Group();
+  const N_RAYS = 36; // 360° full surround array every 10°
+  const rayAngles = [];
+  for (let i = 0; i < N_RAYS; i++) {
+    rayAngles.push((i * (360 / N_RAYS)) * Math.PI / 180);
+  }
+  
+  // Dynamic 360° Ray Lines with Vertex Colors
+  const rayPositions = new Float32Array(N_RAYS * 2 * 3);
+  const rayColors = new Float32Array(N_RAYS * 2 * 3);
+  const rayGeo = new THREE.BufferGeometry();
+  rayGeo.setAttribute('position', new THREE.BufferAttribute(rayPositions, 3));
+  rayGeo.setAttribute('color', new THREE.BufferAttribute(rayColors, 3));
+  
+  const rayMat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.75,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const rayLines = new THREE.LineSegments(rayGeo, rayMat);
+  group.add(rayLines);
+
+  // Full 360° Concentric Range Rings (8m, 20m, 45m)
+  const ringDistances = [8, 20, 45];
+  const ringPositions = [];
+  const ringColors = [];
+  const ringSteps = 64;
+  for (const dist of ringDistances) {
+    for (let s = 0; s < ringSteps; s++) {
+      const a1 = (s / ringSteps) * Math.PI * 2;
+      const a2 = ((s + 1) / ringSteps) * Math.PI * 2;
+      ringPositions.push(Math.sin(a1) * dist, 0.42, -Math.cos(a1) * dist);
+      ringPositions.push(Math.sin(a2) * dist, 0.42, -Math.cos(a2) * dist);
+      const col = dist <= 8 ? [1.0, 0.35, 0.3] : dist <= 20 ? [1.0, 0.7, 0.2] : [0.27, 0.9, 1.0];
+      ringColors.push(...col, ...col);
+    }
+  }
+  const ringGeo = new THREE.BufferGeometry();
+  ringGeo.setAttribute('position', new THREE.Float32BufferAttribute(ringPositions, 3));
+  ringGeo.setAttribute('color', new THREE.Float32BufferAttribute(ringColors, 3));
+  const ringMat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.32,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const ringLines = new THREE.LineSegments(ringGeo, ringMat);
+  group.add(ringLines);
+
+  function update(hits) {
+    const pos = rayGeo.attributes.position.array;
+    const col = rayGeo.attributes.color.array;
+    for (let i = 0; i < N_RAYS; i++) {
+      const a = rayAngles[i];
+      // Range profile: Forward reaches 70m, Sides reach 25m, Rear reaches 40m
+      const isFwd = Math.cos(a) > 0.65;
+      const isRear = Math.cos(a) < -0.65;
+      const maxFar = isFwd ? 70 : isRear ? 40 : 25;
+      let d = maxFar;
+      if (hits && hits[i] !== undefined) d = Math.min(hits[i], maxFar);
+      
+      const idx = i * 6;
+      // Start at vehicle perimeter
+      const startX = Math.sin(a) * 1.0;
+      const startZ = -Math.cos(a) * 1.8;
+      pos[idx] = startX;
+      pos[idx + 1] = 0.52;
+      pos[idx + 2] = startZ;
+      pos[idx + 3] = Math.sin(a) * d;
+      pos[idx + 4] = 0.42;
+      pos[idx + 5] = -Math.cos(a) * d;
+
+      // Dynamic color thresholding: Red (<7m) -> Amber (<15m) -> Cyan (Safe)
+      let r = 0.27, g = 0.90, b = 1.0;
+      if (d < 6.5) { r = 1.0; g = 0.20; b = 0.20; }
+      else if (d < 15.0) { r = 1.0; g = 0.72; b = 0.22; }
+
+      col[idx] = r; col[idx + 1] = g; col[idx + 2] = b;
+      col[idx + 3] = r; col[idx + 4] = g; col[idx + 5] = b;
+    }
+    rayGeo.attributes.position.needsUpdate = true;
+    rayGeo.attributes.color.needsUpdate = true;
+  }
+
+  update(new Array(N_RAYS).fill(50));
+  return { group, update, rayAngles };
+}
+
+let laneGuide = null;
+function makeLaneGuideVisualizer(scene) {
+  const N_PTS = 40;
+  const positions = new Float32Array(N_PTS * 3);
+  const colors = new Float32Array(N_PTS * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.88,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const line = new THREE.Line(geo, mat);
+  line.renderOrder = 4;
+  scene.add(line);
+
+  function update(track, egoS, egoLat, currentLane) {
+    if (!track || !track.curve) return;
+    const pos = geo.attributes.position.array;
+    const col = geo.attributes.color.array;
+    const targetLat = track.laneLat ? track.laneLat('fwd', currentLane) : egoLat;
+    
+    for (let i = 0; i < N_PTS; i++) {
+      const distAhead = (i + 1) * 1.35;
+      const s = (egoS + distAhead) % track.L;
+      const u = (s / track.L + 1) % 1;
+      const pt = track.curve.getPointAt(u);
+      const tang = track.curve.getTangentAt(u);
+      const rightX = tang.z, rightZ = -tang.x;
+      const rLen = Math.hypot(rightX, rightZ) || 1;
+      const rx = rightX / rLen, rz = rightZ / rLen;
+      
+      const wx = pt.x + rx * targetLat;
+      const wy = 0.38 + (pt.y || 0);
+      const wz = pt.z + rz * targetLat;
+      
+      const idx = i * 3;
+      pos[idx] = wx;
+      pos[idx + 1] = wy;
+      pos[idx + 2] = wz;
+
+      const alpha = Math.max(0.08, 1.0 - (i / N_PTS));
+      col[idx] = 0.22 * alpha;
+      col[idx + 1] = 0.92 * alpha;
+      col[idx + 2] = 1.00 * alpha;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  return { line, update };
+}
+
 function updateSensors(et) {
   const dtS = Math.max(0.005, et - lastSenseT);
   lastSenseT = et;
@@ -1610,30 +2255,65 @@ function updateSensors(et) {
     if (dist > SENS.v2vRange) continue;
     SENS.bsm.push({
       id: ai.id, dist, x: ai.car.position.x, z: ai.car.position.z, v: ai.v, heading: ai.psi,
-      braking: ai.braking || ai.forceT > 0 || ai.behavior === 'stopped'
+      braking: ai.braking || ai.forceT > 0 || ai.behavior === 'stopped',
+      t: et
     });
   }
 
   collectRayTargets();
   const f = dyn.forward();
   const hits = [];
-  /* forward radar fan */
+
+  /* 360° Surround LiDAR / Radar Scanner (36 Rays) */
+  const N_RAYS = 36;
+  const rayHitDistances = [];
+  let fwdMin = 999, leftMin = 999, rightMin = 999, rearMin = 999;
   let nearest = null;
-  const fanOx = dyn.x + f.x * 1.9, fanOz = dyn.z + f.z * 1.9;
-  for (let k = -4; k <= 4; k++) {
-    const a = k * 3 * Math.PI / 180;
+
+  for (let k = 0; k < N_RAYS; k++) {
+    const a = (k * (360 / N_RAYS)) * Math.PI / 180;
     const ca = Math.cos(a), sa = Math.sin(a);
+    // Relative direction in world coordinates
     const dx = f.x * ca - f.z * sa, dz = f.x * sa + f.z * ca;
-    const h = castRay(fanOx, 0.55, fanOz, dx, dz, SENS.radar.far);
+    const isFwd = ca > 0.65;
+    const isRear = ca < -0.65;
+    const rayMax = isFwd ? 75 : isRear ? 45 : 28;
+    const ox = dyn.x + f.x * (ca * 1.8), oz = dyn.z + f.z * (ca * 1.8);
+
+    const h = castRay(ox, 0.55, oz, dx, dz, rayMax);
     if (h) {
-      const wx = fanOx + dx * h.distance, wz = fanOz + dz * h.distance;
-      const latOff = Math.sin(a) * h.distance;
-      if (Math.abs(latOff) < 2.4 && (!nearest || h.distance < nearest.dist))
-        nearest = { dist: h.distance, latOff, tag: tagOf(h.object) };
-      hits.push({ x: wx, z: wz, tag: tagOf(h.object) });
+      rayHitDistances.push(h.distance);
+      const wx = ox + dx * h.distance, wz = oz + dz * h.distance;
+      const tag = tagOf(h.object);
+      hits.push({ x: wx, z: wz, tag, dist: h.distance, angle: a });
+
+      // Sector proximity grouping
+      if (isFwd) {
+        if (h.distance < fwdMin) fwdMin = h.distance;
+        if (!nearest || h.distance < nearest.dist) nearest = { dist: h.distance, latOff: Math.sin(a) * h.distance, tag };
+      } else if (isRear) {
+        if (h.distance < rearMin) rearMin = h.distance;
+      } else if (sa < 0) {
+        if (h.distance < leftMin) leftMin = h.distance;
+      } else {
+        if (h.distance < rightMin) rightMin = h.distance;
+      }
+    } else {
+      rayHitDistances.push(rayMax);
     }
   }
+
+  if (sensorVis) sensorVis.update(rayHitDistances);
   SENS.radar.nearest = nearest;
+
+  // Compute Time-To-Collision (TTC) for forward closing objects
+  const fwdClosingSpeed = Math.max(dyn.u, 0.5);
+  const fwdTtc = fwdMin < 70 ? fwdMin / fwdClosingSpeed : 99;
+  SENS.proximity = {
+    fwd: fwdMin, left: leftMin, right: rightMin, rear: rearMin,
+    min: Math.min(fwdMin, leftMin, rightMin, rearMin),
+    fwdTtc
+  };
   /* ultrasonic — 6 fixed bumper channels, capped at 7 m when clear.
      Cast at 0.55 m so rails/barrels/curbs are all in the beam band. */
   for (let k = 0; k < ULTRA_DIRS.length; k++) {
@@ -1657,40 +2337,121 @@ function updateSensors(et) {
     const p = T.project(b.x, b.z, proj.idx);
     const relH = wrapAngle(b.heading - p.psi);
     const along = Math.cos(relH) > 0 ? 1 : -1;
-    SENS.perceived.push({ src: 'v2v', s: p.s, lat: p.lat, v: b.v * along, braking: b.braking, seen: false, tag: 'vehicle', id: b.id, wx: b.x, wz: b.z });
+    const v2vAge = Math.max(0, et - (b.t ?? et));
+    SENS.perceived.push({
+      src: 'v2v',
+      s: p.s,
+      lat: p.lat,
+      v: b.v * along,
+      braking: b.braking,
+      seen: false,
+      tag: 'vehicle',
+      id: b.id,
+      wx: b.x,
+      wz: b.z,
+      bsmX: b.x,
+      bsmZ: b.z,
+      heading: b.heading,
+      v2vAge
+    });
   }
+
   /* ray hits: confirm BSM tracks (line-of-sight) or track unknowns */
   const pts = [];
   for (const h of hits) {
-    if (pts.some(q => Math.hypot(q.x - h.x, q.z - h.z) < 1.4)) continue;
+    if (pts.some(q => Math.hypot(q.x - h.x, q.z - h.z) < 1.8)) continue;
     pts.push(h);
   }
+
   for (const h of pts) {
     let matched = false;
     for (const p of SENS.perceived) {
-      if (p.src === 'v2v' && Math.hypot(h.x - p.wx, h.z - p.wz) < 2.8) { p.seen = true; matched = true; break; }
+      // Check distance against canonical BSM position with 4.5m footprint
+      const centerDist = Math.hypot(h.x - (p.bsmX ?? p.wx), h.z - (p.bsmZ ?? p.wz));
+      if (centerDist < 4.5) {
+        p.seen = true;
+        p.src = 'fused';
+        matched = true;
+        break;
+      }
     }
-    if (matched) continue;
+    if (matched) continue; // Ray belongs to an already known V2V/Fused vehicle, skip!
+
+    // Filter out non-vehicle hits (barrels, rails, obstacles, terrain)
+    if (h.tag !== 'vehicle' && h.tag !== 'car') continue;
+
+    // Filter out hits on Ego body
+    if (Math.hypot(h.x - dyn.x, h.z - dyn.z) < 2.5) continue;
+
+    // Double-check against perceived list
+    if (SENS.perceived.some(p => Math.hypot(h.x - p.wx, h.z - p.wz) < 4.5)) continue;
+
     const p2 = T.project(h.x, h.z, proj.idx);
     let tr = null;
     for (const t of SENS.localTracks) {
-      if (Math.hypot(h.x - t.x, h.z - t.z) < 3.2) { tr = t; break; }
+      if (Math.hypot(h.x - t.x, h.z - t.z) < 3.8) { tr = t; break; }
     }
     if (tr) {
       tr.vx = tr.vx * 0.55 + ((h.x - tr.x) / dtS) * 0.45;
       tr.vz = tr.vz * 0.55 + ((h.z - tr.z) / dtS) * 0.45;
       tr.vAlong = tr.vAlong * 0.55 + ((p2.s - tr.s) / dtS) * 0.45;
-      tr.x = h.x; tr.z = h.z; tr.s = p2.s; tr.lat = p2.lat;
+      tr.x = tr.x * 0.6 + h.x * 0.4;
+      tr.z = tr.z * 0.6 + h.z * 0.4;
+      tr.s = p2.s; tr.lat = p2.lat;
       tr.misses = 0; tr.tag = h.tag;
     } else {
       SENS.localTracks.push({ x: h.x, z: h.z, vx: 0, vz: 0, s: p2.s, lat: p2.lat, vAlong: 0, misses: 0, tag: h.tag });
     }
   }
+
   for (const t of SENS.localTracks) t.misses++;
-  for (let i = SENS.localTracks.length - 1; i >= 0; i--)
-    if (SENS.localTracks[i].misses > 30) SENS.localTracks.splice(i, 1);
-  for (const t of SENS.localTracks)
-    SENS.perceived.push({ src: 'local', s: t.s, lat: t.lat, v: t.vAlong, braking: false, seen: t.misses === 0, tag: t.tag, id: -1 });
+  for (let i = SENS.localTracks.length - 1; i >= 0; i--) {
+    if (SENS.localTracks[i].misses > 15) SENS.localTracks.splice(i, 1);
+  }
+
+  // Deduplicate overlapping local tracks (merge tracks within 4.0m)
+  for (let i = 0; i < SENS.localTracks.length; i++) {
+    const t1 = SENS.localTracks[i];
+    // Remove if it overlaps any perceived V2V/Fused car
+    if (SENS.perceived.some(p => Math.hypot(t1.x - p.wx, t1.z - p.wz) < 4.5)) {
+      SENS.localTracks.splice(i, 1);
+      i--;
+      continue;
+    }
+    for (let j = i + 1; j < SENS.localTracks.length; j++) {
+      const t2 = SENS.localTracks[j];
+      if (Math.hypot(t1.x - t2.x, t1.z - t2.z) < 4.0) {
+        t1.x = (t1.x + t2.x) * 0.5;
+        t1.z = (t1.z + t2.z) * 0.5;
+        t1.vx = (t1.vx + t2.vx) * 0.5;
+        t1.vz = (t1.vz + t2.vz) * 0.5;
+        t1.vAlong = (t1.vAlong + t2.vAlong) * 0.5;
+        t1.misses = Math.min(t1.misses, t2.misses);
+        SENS.localTracks.splice(j, 1);
+        j--;
+      }
+    }
+  }
+
+  // Add clean unique local tracks to perceived
+  for (const t of SENS.localTracks) {
+    if (t.misses > 6) continue;
+    const heading = (Math.hypot(t.vx, t.vz) > 0.2) ? Math.atan2(-t.vx, -t.vz) : (dyn.psi ?? 0);
+    SENS.perceived.push({
+      src: 'local',
+      s: t.s,
+      lat: t.lat,
+      v: t.vAlong,
+      braking: false,
+      seen: true,
+      tag: 'vehicle',
+      id: -1,
+      wx: t.x,
+      wz: t.z,
+      heading,
+      v2vAge: 0
+    });
+  }
 
   /* SPAT: nearest main-road signal ahead */
   SENS.signal = null;
@@ -1728,229 +2489,1250 @@ function updateCameraFeed() {
 }
 
 /* ================================================================
-   [ADAS] reference driver policy — consumes ONLY the sensor frame.
-   Replace wholesale via v2vScene.policy.
+   [ADAS & RISK-TRIGGERED V2V SAFETY ARCHITECTURE]
+   Phases 1-17: Authoritative TTC, Unified Threat Evaluation,
+   Persistent Risk States, Control Proposals, and Central Arbitration.
    ================================================================ */
+const MAX_AUTONOMOUS_SPEED = 80.0 / 3.6; // 22.2222 m/s (80 km/h hard ceiling)
+
 function createADAS() { return { lka: true, aeb: true, gov: true, alc: true }; }
-const alc = { phase: 'idle', fromLane: 0, targetLane: 0, latNow: 0, timer: 0, cool: 0, reqDir: 0, goal: null, returning: false };
-const pedSlew = { th: 0, br: 0 };
-function alcRequest(dir) { alc.reqDir = dir; }
-function resetALC() { alc.phase = 'idle'; alc.goal = null; alc.returning = false; alc.reqDir = 0; alc.cool = 0; pedSlew.th = 0; pedSlew.br = 0; }
 
-function computePolicy(dt, proj) {
-  const u = Math.max(dyn.u, 0.001);
-  const out = {
-    steer: 0, throttle: 0, brake: 0, vt: player.cruise,
-    alert: null, sev: 'amber', evasive: false,
-    lkaActive: false, govActive: false, aebActive: false, v2vActive: false, alcActive: false, sigActive: false
-  };
-  let vt = player.cruise, emergency = false, evasiveHard = false;
-  const perceived = SENS.perceived;
-  const egoS = proj.s, egoLat = proj.lat;
-  const sRel = p => T.wrapS(p.s - egoS);
-  const centerOf = i => T.laneLat('fwd', i);
-  const curLane = nearestLaneIdx(T, egoLat);
-  const lanesF = T.def.lanesF;
+// Phase 4: Named risk thresholds (low TTC = high risk)
+const RISK_THRESHOLDS = {
+  TTC_CRITICAL_ENTER: 1.5,
+  TTC_CRITICAL_EXIT: 2.2,
+  TTC_HIGH_ENTER: 3.2,
+  TTC_HIGH_EXIT: 4.2,
+  TTC_CAUTION_ENTER: 5.5,
+  TTC_CAUTION_EXIT: 7.0,
 
-  /* ---- ALC (auto + A/D requests), clearance from PERCEPTION ---- */
-  const st = alc;
-  st.cool = Math.max(0, st.cool - dt);
-  st.timer += dt;
-  const laneClearP = (i, back, fwd) => {
-    const c0 = centerOf(i);
-    for (const p of perceived) {
-      if (Math.abs(p.lat - c0) > 2.3) continue;
-      const g = sRel(p);
-      if (g > -back && g < fwd) return false;
-    }
-    return true;
-  };
-  if (st.phase !== 'idle') st.reqDir = 0;
-  if (adas.alc) {
-    if (st.phase === 'idle') {
-      let target = -1;
-      if (st.reqDir !== 0 && st.cool === 0) {
-        const t = curLane + st.reqDir;
-        if (t >= 0 && t < lanesF) {
-          if (laneClearP(t, 24, 48)) target = t;
-          else toast('ALC — TARGET LANE OCCUPIED');
-        } else toast('NO ADJACENT LANE');
-      } else if (st.cool === 0) {
-        const desired = 8 + u * 1.4;
-        let slow = null, sg2 = 1e9;
-        for (const p of perceived) {
-          if (p.v < -0.5) continue;
-          if (Math.abs(p.lat - egoLat) > 2.3) continue;
-          const g = sRel(p);
-          if (g <= desired + 8 || g > 75) continue;
-          if (!(p.v < u - 3 || p.v < 5)) continue;
-          if (g < sg2) { sg2 = g; slow = p; }
-        }
-        if (slow) {
-          const left = curLane - 1;
-          if (left >= 0 && laneClearP(left, 24, 50)) target = left;
-          else if (curLane + 1 < lanesF && laneClearP(curLane + 1, 24, 50)) target = curLane + 1;
-        }
-      }
-      st.reqDir = 0;
-      if (target >= 0) {
-        st.phase = 'move'; st.fromLane = curLane; st.targetLane = target; st.latNow = egoLat; st.timer = 0; st.returning = false;
-        out.alcActive = true;
-        const d = target - curLane;
-        out.alert = `ALC · LANE CHANGE ${d < 0 ? 'LEFT' : 'RIGHT'}`;
-        toast(`ALC — LANE CHANGE ${d < 0 ? 'LEFT' : 'RIGHT'}`);
-      }
-    } else if (st.phase === 'move') {
-      const goalC = centerOf(st.targetLane);
-      const dir = Math.sign(goalC - st.latNow);
-      st.latNow += dir * 1.35 * dt;
-      if (dir === 0 || (dir > 0 && st.latNow >= goalC) || (dir < 0 && st.latNow <= goalC)) {
-        st.latNow = goalC;
-        if (st.returning || st.targetLane === st.fromLane) { st.phase = 'idle'; st.cool = 2.5; st.returning = false; }
-        else { st.phase = 'passing'; st.timer = 0; }
-      }
-      const crossed = Math.abs(egoLat - centerOf(st.fromLane)) > 1.4;
-      if (!crossed && !st.returning && st.targetLane !== st.fromLane && !laneClearP(st.targetLane, 14, 26)) {
-        st.targetLane = st.fromLane; st.returning = true;
-        toast('ALC — CHANGE ABORTED, RETURNING');
-      }
-      out.alcActive = true;
-      if (!out.alert) out.alert = st.returning ? 'ALC · RETURNING TO LANE' : 'ALC · LANE CHANGE';
-    } else if (st.phase === 'passing') {
-      out.alcActive = true;
-      st.latNow = centerOf(st.targetLane);
-      if (st.timer > 2.5 && laneClearP(st.fromLane, 20, 35)) {
-        let ok = true;
-        for (const p of perceived) {
-          if (p.v < -0.5 || Math.abs(p.lat - centerOf(st.fromLane)) > 2.3) continue;
-          const g = sRel(p);
-          if (g > -12 && g < 18 && p.v < u) ok = false;
-        }
-        if (ok) {
-          const back = st.fromLane;
-          st.fromLane = st.targetLane; st.targetLane = back;
-          st.phase = 'move'; st.latNow = egoLat; st.timer = 0; st.returning = true;
-          toast('ALC — MERGING BACK');
-        }
-      }
-      if (!out.alert) out.alert = 'ALC · PASSING — CHECKING MERGE';
-    }
-  } else { st.phase = 'idle'; st.returning = false; }
+  GAP_CRITICAL: 6.5,
+  GAP_HIGH: 14.0,
+  GAP_CAUTION: 28.0,
 
-  /* ---- ACC: distance by speed control, brake only when too close ---- */
-  const filterLat = centerOf(out.alcActive ? st.targetLane : curLane);
-  let lead = null, lg = 1e9;
-  for (const p of perceived) {
-    if (p.v < -0.5) continue;
-    if (Math.abs(p.lat - filterLat) > 2.3) continue;
-    const g = sRel(p);
-    if (g <= 1 || g > 190) continue;
-    if (p.src === 'local' && g > 110) continue;
-    if (g < lg) { lg = g; lead = p; }
-  }
-  if (lead) {
-    const desired = 8 + u * 1.4;
-    const closing = u - lead.v;
-    const ttc = closing > 0.25 ? lg / closing : 1e9;
-    let vtAcc = lead.v + 0.5 * (lg - desired);
-    if (lead.braking && lead.src === 'v2v' && ttc < 7) vtAcc = Math.min(vtAcc, Math.max(lead.v * (ttc / 7), 0));
-    vt = clamp(vtAcc, 0, player.cruise);
-    out.v2vActive = lead.src === 'v2v';
-    out.aebActive = lead.src === 'local';
-    if (lg < 10 || ttc < 2.4) {
-      emergency = true;
-      out.alert = lead.src === 'v2v' ? 'FCW · IMMINENT — FULL AUTO BRAKE' : 'AEB · SENSED OBJECT — FULL BRAKE';
-      out.sev = 'red';
-    } else if (lead.braking && lead.src === 'v2v' && ttc < 7) {
-      out.alert = lead.seen ? 'FCW · LEAD VEHICLE BRAKING' : 'FCW · OCCLUDED VEHICLE BRAKING — RADIO ALERT';
-    } else if (lg < desired * 1.5 && !out.alert) {
-      out.alert = 'ACC · FOLLOWING — SPEED CONTROL';
-    }
+  CLOSING_SPEED_MIN: 0.15,
+
+  V2V_FRESH_MAX_AGE: 0.6,
+  V2V_STALE_AGE: 1.8,
+
+  RECOVERY_HOLD_TIME: 0.75
+};
+
+// Phase 17: Global telemetry & debug state
+const telemetryState = {
+  mode: 'perception',
+  riskLevel: 'NORMAL',
+  highestRiskThreat: null,
+  threatId: -1,
+  threatSource: 'NONE',
+  ttc: Infinity,
+  closingSpeed: 0,
+  distance: Infinity,
+  selectedAction: 'NORMAL',
+  lateralAuthority: 'MANUAL',
+  longitudinalAuthority: 'MANUAL',
+  laneChangeState: 'KEEP_LANE',
+  v2vAge: 0
+};
+
+// Phase 2 & 16: Authoritative 2D Relative Dynamics & TTC
+function calculateClosingDynamics(ego, target) {
+  const targetX = target.wx ?? target.x ?? 0;
+  const targetZ = target.wz ?? target.z ?? 0;
+  const egoX = ego.x ?? 0;
+  const egoZ = ego.z ?? 0;
+
+  const dx = targetX - egoX;
+  const dz = targetZ - egoZ;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-3) {
+    return { dist: 0, closingVelocity: 0, ttc: Infinity, isClosing: false, fwdDist: 0, latOffset: 0 };
   }
 
-  /* ---- curve governor (map) ---- */
-  if (adas.gov) {
-    const mu = 0.9, D = u * 3.2 + 35;
-    for (let d = 12; d < D; d += 7) {
-      const k = Math.abs(T.kappaAt(egoS + d));
+  const egoPsi = ego.psi ?? 0;
+  const egoSpeed = Math.max(0, ego.u ?? 0);
+  const egoVx = -egoSpeed * Math.sin(egoPsi);
+  const egoVz = -egoSpeed * Math.cos(egoPsi);
+
+  const targetHeading = target.heading ?? target.psi ?? egoPsi;
+  const targetSpeed = target.vAlong ?? target.speed ?? target.v ?? 0;
+  const targetVx = -targetSpeed * Math.sin(targetHeading);
+  const targetVz = -targetSpeed * Math.cos(targetHeading);
+
+  const relVx = egoVx - targetVx;
+  const relVz = egoVz - targetVz;
+
+  const losX = dx / dist;
+  const losZ = dz / dist;
+  const closingVelocity = relVx * losX + relVz * losZ;
+  const isClosing = closingVelocity > RISK_THRESHOLDS.CLOSING_SPEED_MIN;
+  const ttc = isClosing ? Math.max(0.01, dist / closingVelocity) : Infinity;
+
+  const fwdUnitX = -Math.sin(egoPsi);
+  const fwdUnitZ = -Math.cos(egoPsi);
+  const rightUnitX = Math.cos(egoPsi);
+  const rightUnitZ = -Math.sin(egoPsi);
+
+  const fwdDist = dx * fwdUnitX + dz * fwdUnitZ;
+  const latOffset = dx * rightUnitX + dz * rightUnitZ;
+
+  return { dist, closingVelocity, ttc, isClosing, fwdDist, latOffset };
+}
+
+// Phase 1, 3, 14, 16: Unified Threat Evaluation Layer
+function evaluateThreats(ego, perceived, track, et) {
+  const threats = [];
+  const egoS = egoProj ? egoProj.s : 0;
+  const egoLat = egoProj ? egoProj.lat : 0;
+  const egoLane = nearestLaneIdx(track, egoLat);
+  const egoSpeed = Math.max(0, ego.u ?? 0);
+
+  for (const p of (perceived || [])) {
+    const dyn2D = calculateClosingDynamics(ego, p);
+    const relS = track.wrapS ? track.wrapS(p.s - egoS) : (p.s - egoS);
+    const pLane = nearestLaneIdx(track, p.lat);
+    const latDiff = Math.abs(p.lat - egoLat);
+    const isSameLane = latDiff < 1.85;
+    const isAdjacentLane = latDiff >= 1.85 && latDiff < 5.2;
+    const isAhead = relS > 0.1 || dyn2D.fwdDist > 0.1;
+    const v2vAge = p.v2vAge ?? (et !== undefined && p.t !== undefined ? Math.max(0, et - p.t) : 0);
+    const isFresh = (p.src === 'local') || (v2vAge < RISK_THRESHOLDS.V2V_STALE_AGE);
+
+    let collisionRisk = 0.0;
+    if (isFresh && dyn2D.dist < 130.0) {
+      if (dyn2D.ttc < RISK_THRESHOLDS.TTC_CRITICAL_ENTER || (isAhead && isSameLane && dyn2D.dist < RISK_THRESHOLDS.GAP_CRITICAL)) {
+        collisionRisk = 1.0;
+      } else if (dyn2D.ttc < RISK_THRESHOLDS.TTC_HIGH_ENTER || (isAhead && isSameLane && dyn2D.dist < RISK_THRESHOLDS.GAP_HIGH)) {
+        const factor = 1.0 - (dyn2D.ttc - RISK_THRESHOLDS.TTC_CRITICAL_ENTER) / Math.max(0.01, (RISK_THRESHOLDS.TTC_HIGH_ENTER - RISK_THRESHOLDS.TTC_CRITICAL_ENTER));
+        collisionRisk = 0.75 + 0.25 * clamp(factor, 0, 1);
+      } else if (dyn2D.ttc < RISK_THRESHOLDS.TTC_CAUTION_ENTER || (isAhead && isSameLane && dyn2D.dist < RISK_THRESHOLDS.GAP_CAUTION)) {
+        const factor = 1.0 - (dyn2D.ttc - RISK_THRESHOLDS.TTC_HIGH_ENTER) / Math.max(0.01, (RISK_THRESHOLDS.TTC_CAUTION_ENTER - RISK_THRESHOLDS.TTC_HIGH_ENTER));
+        collisionRisk = 0.35 + 0.40 * clamp(factor, 0, 1);
+      } else if (dyn2D.isClosing && dyn2D.dist < 50.0) {
+        collisionRisk = 0.10 + 0.25 * (1.0 - dyn2D.dist / 50.0);
+      }
+
+      if (p.braking && isAhead && dyn2D.dist < 60.0) {
+        collisionRisk = Math.max(collisionRisk, isSameLane ? 0.85 : 0.50);
+      }
+
+      if (!isSameLane) {
+        collisionRisk *= isAdjacentLane ? 0.60 : 0.25;
+      }
+      if (!isAhead && dyn2D.closingVelocity < 0.2) {
+        collisionRisk *= 0.15;
+      }
+
+      if (p.src === 'v2v' && v2vAge > RISK_THRESHOLDS.V2V_FRESH_MAX_AGE) {
+        const decay = Math.max(0.15, 1.0 - (v2vAge - RISK_THRESHOLDS.V2V_FRESH_MAX_AGE) / (RISK_THRESHOLDS.V2V_STALE_AGE - RISK_THRESHOLDS.V2V_FRESH_MAX_AGE));
+        collisionRisk *= decay;
+      }
+    }
+
+    p.distance = dyn2D.dist;
+    p.relativeSpeed = (p.v ?? p.vAlong ?? 0) - egoSpeed;
+    p.closingSpeed = dyn2D.closingVelocity;
+    p.lane = pLane;
+    p.ttc = dyn2D.ttc;
+    p.isClosing = dyn2D.isClosing;
+    p.collisionRisk = clamp(collisionRisk, 0, 1);
+    p.v2vAge = v2vAge;
+
+    threats.push({
+      id: p.id,
+      source: p.src ? p.src.toUpperCase() : 'UNKNOWN',
+      wx: p.wx ?? p.x ?? 0,
+      wz: p.wz ?? p.z ?? 0,
+      s: p.s,
+      lat: p.lat,
+      v: p.v ?? p.vAlong ?? 0,
+      braking: !!p.braking,
+      seen: !!p.seen,
+      tag: p.tag || 'vehicle',
+      distance: dyn2D.dist,
+      fwdDist: dyn2D.fwdDist,
+      latOffset: dyn2D.latOffset,
+      relativeSpeed: (p.v ?? p.vAlong ?? 0) - egoSpeed,
+      closingSpeed: dyn2D.closingVelocity,
+      lane: pLane,
+      heading: p.heading ?? p.psi ?? ego.psi,
+      ttc: dyn2D.ttc,
+      isClosing: dyn2D.isClosing,
+      collisionRisk: clamp(collisionRisk, 0, 1),
+      trajectoryRisk: isSameLane ? 1.0 : isAdjacentLane ? 0.5 : 0.1,
+      v2vAge,
+      isAhead,
+      isSameLane
+    });
+  }
+
+  threats.sort((a, b) => {
+    if (Math.abs(b.collisionRisk - a.collisionRisk) > 0.04) return b.collisionRisk - a.collisionRisk;
+    if (Number.isFinite(a.ttc) || Number.isFinite(b.ttc)) {
+      if (a.ttc !== b.ttc) return a.ttc - b.ttc;
+    }
+    return a.distance - b.distance;
+  });
+
+  const highestRiskThreat = (threats.length > 0 && threats[0].collisionRisk > 0.10) ? threats[0] : null;
+
+  return { threats, highestRiskThreat };
+}
+
+// Phase 4: Persistent Risk State Machine with Hysteresis
+class RiskStateMachine {
+  constructor() {
+    this.currentLevel = 'NORMAL';
+    this.recoveryTimer = 0.0;
+  }
+  reset() {
+    this.currentLevel = 'NORMAL';
+    this.recoveryTimer = 0.0;
+  }
+  update(highestRiskThreat, dt) {
+    if (!highestRiskThreat || highestRiskThreat.collisionRisk < 0.10) {
+      if (this.currentLevel !== 'NORMAL') {
+        this.recoveryTimer += dt;
+        if (this.recoveryTimer >= RISK_THRESHOLDS.RECOVERY_HOLD_TIME) {
+          this.recoveryTimer = 0.0;
+          if (this.currentLevel === 'CRITICAL') this.currentLevel = 'HIGH';
+          else if (this.currentLevel === 'HIGH') this.currentLevel = 'CAUTION';
+          else if (this.currentLevel === 'CAUTION') this.currentLevel = 'NORMAL';
+        }
+      }
+      return this.currentLevel;
+    }
+
+    const ttc = highestRiskThreat.ttc;
+    const dist = highestRiskThreat.distance;
+    const isSameLane = highestRiskThreat.isSameLane;
+    const isAhead = highestRiskThreat.isAhead;
+
+    const reqCritical = (ttc <= RISK_THRESHOLDS.TTC_CRITICAL_ENTER) ||
+                        (isAhead && isSameLane && dist <= RISK_THRESHOLDS.GAP_CRITICAL);
+
+    const reqHigh = (ttc <= RISK_THRESHOLDS.TTC_HIGH_ENTER) ||
+                    (isAhead && isSameLane && dist <= RISK_THRESHOLDS.GAP_HIGH) ||
+                    (highestRiskThreat.braking && isAhead && isSameLane && dist <= 35.0);
+
+    const reqCaution = (ttc <= RISK_THRESHOLDS.TTC_CAUTION_ENTER) ||
+                       (isAhead && isSameLane && dist <= RISK_THRESHOLDS.GAP_CAUTION) ||
+                       (highestRiskThreat.braking && isAhead && dist <= 55.0);
+
+    if (reqCritical) {
+      this.currentLevel = 'CRITICAL';
+      this.recoveryTimer = 0.0;
+    } else if (this.currentLevel === 'CRITICAL') {
+      if (ttc > RISK_THRESHOLDS.TTC_CRITICAL_EXIT && (!isAhead || !isSameLane || dist > RISK_THRESHOLDS.GAP_CRITICAL + 3.0)) {
+        this.recoveryTimer += dt;
+        if (this.recoveryTimer >= RISK_THRESHOLDS.RECOVERY_HOLD_TIME) {
+          this.currentLevel = 'HIGH';
+          this.recoveryTimer = 0.0;
+        }
+      } else {
+        this.recoveryTimer = 0.0;
+      }
+    } else if (reqHigh) {
+      this.currentLevel = 'HIGH';
+      this.recoveryTimer = 0.0;
+    } else if (this.currentLevel === 'HIGH') {
+      if (ttc > RISK_THRESHOLDS.TTC_HIGH_EXIT && (!isAhead || !isSameLane || dist > RISK_THRESHOLDS.GAP_HIGH + 4.0)) {
+        this.recoveryTimer += dt;
+        if (this.recoveryTimer >= RISK_THRESHOLDS.RECOVERY_HOLD_TIME) {
+          this.currentLevel = 'CAUTION';
+          this.recoveryTimer = 0.0;
+        }
+      } else {
+        this.recoveryTimer = 0.0;
+      }
+    } else if (reqCaution) {
+      this.currentLevel = 'CAUTION';
+      this.recoveryTimer = 0.0;
+    } else if (this.currentLevel === 'CAUTION') {
+      if (ttc > RISK_THRESHOLDS.TTC_CAUTION_EXIT && (!isAhead || !isSameLane || dist > RISK_THRESHOLDS.GAP_CAUTION + 5.0)) {
+        this.recoveryTimer += dt;
+        if (this.recoveryTimer >= RISK_THRESHOLDS.RECOVERY_HOLD_TIME) {
+          this.currentLevel = 'NORMAL';
+          this.recoveryTimer = 0.0;
+        }
+      } else {
+        this.recoveryTimer = 0.0;
+      }
+    }
+
+    return this.currentLevel;
+  }
+}
+
+class StoppingDistanceModel {
+  constructor(config = {}) {
+    this.reactionTime = config.reactionTime ?? 0.65;
+    this.comfDecel = config.comfDecel ?? 2.8;
+    this.safetyMargin = config.safetyMargin ?? 6.0;
+  }
+  calculateSafeSpeed(availableDistance, targetSpeed = 0) {
+    const dAvail = Math.max(0, availableDistance - this.safetyMargin);
+    if (dAvail <= 0.5) return 0.0;
+    const a = this.comfDecel;
+    const tr = this.reactionTime;
+    const c = 2 * a * dAvail + targetSpeed * targetSpeed;
+    const disc = (2 * a * tr) * (2 * a * tr) + 4 * c;
+    const vSafe = (-2 * a * tr + Math.sqrt(Math.max(0, disc))) / 2;
+    return Math.max(0, vSafe);
+  }
+  calculateClosingSpeedCeiling(leadDist, leadSpeed) {
+    leadDist = Math.max(0, leadDist);
+    leadSpeed = Math.max(0, leadSpeed);
+    const desiredGap = this.safetyMargin + leadSpeed * 1.5;
+    const availableClosingDist = Math.max(0, leadDist - desiredGap);
+    const vClosingCap = leadSpeed + Math.sqrt(2 * this.comfDecel * availableClosingDist);
+    return Math.min(MAX_AUTONOMOUS_SPEED, vClosingCap);
+  }
+}
+
+class CurvatureGovernor {
+  constructor(config = {}) {
+    this.mu = config.mu ?? 0.88;
+    this.latAccLimit = config.latAcc ?? 3.2;
+    this.comfDecel = config.comfDecel ?? 2.8;
+    this.lookaheadDist = config.lookahead ?? 110.0;
+  }
+  evaluate(track, egoS, currentSpeed, cruiseSpeed) {
+    const baseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, cruiseSpeed);
+    if (!track || typeof track.kappaAt !== 'function') return { safeSpeed: baseSpeed, lookaheadK: 0, upcomingCurvature: 0, governorActive: false };
+    let minAllowedSpeed = baseSpeed;
+    let governorActive = false;
+    const scanEnd = Math.min(this.lookaheadDist, Math.max(40, currentSpeed * 3.8 + 30));
+    const dLook = Math.max(8.0, currentSpeed * 0.70);
+    const lookaheadK = track.kappaAt ? Math.abs(track.kappaAt((egoS + dLook) % (track.L || 1000))) : 0;
+    let upcomingCurvature = 0;
+
+    for (let d = 2; d <= scanEnd; d += 3) {
+      const sAhead = (egoS + d) % (track.L || 1000);
+      const k = Math.abs(track.kappaAt(sAhead));
+      if (k > upcomingCurvature) upcomingCurvature = k;
       if (k < 1e-4) continue;
-      const vc = Math.sqrt(mu * GRAV * 0.55 / k);
-      const vAllow = Math.sqrt(vc * vc + 2 * 0.5 * mu * GRAV * d);
-      if (vAllow < vt) { vt = vAllow; out.govActive = true; }
+      const vCurve = Math.sqrt(Math.min(this.latAccLimit, this.mu * GRAV * 0.50) / k);
+      const vApproach = Math.sqrt(vCurve * vCurve + 2 * this.comfDecel * d);
+      if (vApproach < minAllowedSpeed) {
+        minAllowedSpeed = vApproach;
+        governorActive = true;
+      }
     }
-    if (out.govActive && vt < u - 2 && !out.alert) out.alert = 'CURVE GOVERNOR — SLOWING FOR TURN';
+    return {
+      safeSpeed: Math.max(3.5, Math.min(baseSpeed, minAllowedSpeed)),
+      lookaheadK,
+      upcomingCurvature,
+      governorActive: governorActive && minAllowedSpeed < baseSpeed - 1.0
+    };
+  }
+}
+
+class IDMController {
+  constructor(config = {}) {
+    this.s0 = config.s0 ?? 6.0;
+    this.timeHeadway = config.timeHeadway ?? 1.5;
+    this.maxAccel = config.maxAccel ?? 2.4;
+    this.comfDecel = config.comfDecel ?? 3.0;
+    this.delta = config.delta ?? 4.0;
+  }
+  evaluate(egoSpeed, cruiseSpeed, leadDist, leadRelSpeed, isLeadBraking = false, ttc = Infinity) {
+    egoSpeed = Math.max(0.01, egoSpeed);
+    cruiseSpeed = Math.min(MAX_AUTONOMOUS_SPEED, Math.max(0.01, cruiseSpeed));
+    if (!Number.isFinite(leadDist) || leadDist > 180.0) {
+      return { targetSpeed: cruiseSpeed, desiredGap: this.s0, stage: 'FREE' };
+    }
+    const deltaV = -leadRelSpeed;
+    const sStar = this.s0 + egoSpeed * this.timeHeadway + (egoSpeed * deltaV) / (2 * Math.sqrt(this.maxAccel * this.comfDecel));
+    const effectiveGap = Math.max(0.5, leadDist);
+    const interactionTerm = Math.pow(sStar / effectiveGap, 2);
+
+    let targetSpeed = cruiseSpeed;
+    const leadSpeed = Math.max(0, egoSpeed + leadRelSpeed);
+
+    let stage = 'FOLLOW';
+    if (ttc < 1.8 || leadDist < 7.0) {
+      targetSpeed = 0.0;
+      stage = 'CRITICAL';
+    } else if (ttc < 3.0 || leadDist < 12.0) {
+      targetSpeed = Math.min(targetSpeed, Math.max(0, leadSpeed * 0.5));
+      stage = 'STRONG_BRAKE';
+    } else if (ttc < 5.0 || leadDist < sStar) {
+      targetSpeed = Math.min(targetSpeed, Math.max(0, leadSpeed + 0.35 * (effectiveGap - sStar)));
+      stage = 'DECELERATE';
+    } else if (interactionTerm > 0.04) {
+      targetSpeed = Math.min(cruiseSpeed, Math.max(0, leadSpeed + 0.5 * (effectiveGap - sStar)));
+      stage = 'FOLLOW';
+    }
+    if (isLeadBraking && leadDist < 60.0) {
+      targetSpeed = Math.min(targetSpeed, egoSpeed * 0.65);
+    }
+    return { targetSpeed: clamp(targetSpeed, 0, MAX_AUTONOMOUS_SPEED), desiredGap: sStar, stage };
+  }
+}
+
+class LongitudinalPID {
+  constructor(config = {}) {
+    this.kp = config.kp ?? 0.52;
+    this.ki = config.ki ?? 0.07;
+    this.kd = config.kd ?? 0.05;
+    this.integralLimit = config.integralLimit ?? 4.0;
+    this.maxAccel = config.maxAccel ?? 3.4;
+    this.maxDecel = config.maxDecel ?? 7.5;
+    this.deadband = config.deadband ?? 0.20;
+    this.integral = 0.0;
+    this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
+    this.throttle = 0.0;
+    this.brake = 0.0;
+  }
+  reset() {
+    this.integral = 0.0;
+    this.prevSpeed = 0.0;
+    this.filteredTarget = 0.0;
+    this.throttle = 0.0;
+    this.brake = 0.0;
+  }
+  update(currentSpeed, rawTargetSpeed, dt, forceBrake = 0) {
+    if (dt <= 0) return { throttle: this.throttle, brake: this.brake, filteredTarget: this.filteredTarget };
+    currentSpeed = Math.max(0, currentSpeed);
+    const targetSpeed = clamp(rawTargetSpeed, 0, MAX_AUTONOMOUS_SPEED);
+
+    if (forceBrake > 0) {
+      this.throttle = 0.0;
+      this.brake = Math.max(this.brake, forceBrake);
+      this.integral = 0.0;
+      this.filteredTarget = currentSpeed;
+      return { throttle: this.throttle, brake: this.brake, filteredTarget: 0 };
+    }
+
+    if (this.filteredTarget === 0 && currentSpeed > 0) {
+      this.filteredTarget = currentSpeed;
+    }
+    const maxSpeedInc = 2.2 * dt;
+    const maxSpeedDec = 4.2 * dt;
+    this.filteredTarget += clamp(targetSpeed - this.filteredTarget, -maxSpeedDec, maxSpeedInc);
+    this.filteredTarget = clamp(this.filteredTarget, 0, MAX_AUTONOMOUS_SPEED);
+
+    const error = this.filteredTarget - currentSpeed;
+    if (Math.abs(error) > this.deadband) {
+      this.integral += error * dt;
+      this.integral = clamp(this.integral, -this.integralLimit, this.integralLimit);
+    } else {
+      this.integral *= 0.94;
+    }
+
+    const dSpeed = (currentSpeed - this.prevSpeed) / dt;
+    this.prevSpeed = currentSpeed;
+    const rawAccel = this.kp * error + this.ki * this.integral - this.kd * dSpeed;
+    const accelCmd = clamp(rawAccel, -this.maxDecel, this.maxAccel);
+
+    let targetThrottle = 0.0, targetBrake = 0.0;
+    if (accelCmd > 0.12) {
+      targetThrottle = clamp(accelCmd / this.maxAccel, 0.0, 1.0);
+      targetBrake = 0.0;
+    } else if (accelCmd < -0.32) {
+      targetThrottle = 0.0;
+      targetBrake = clamp(-accelCmd / this.maxDecel, 0.0, 1.0);
+    } else {
+      targetThrottle = 0.04;
+      targetBrake = 0.0;
+    }
+
+    const maxThrottleRate = 2.8 * dt;
+    const maxBrakeRate = 6.0 * dt;
+    this.throttle += clamp(targetThrottle - this.throttle, -maxThrottleRate * 1.5, maxThrottleRate);
+    this.brake += clamp(targetBrake - this.brake, -maxBrakeRate, maxBrakeRate);
+    this.throttle = clamp(this.throttle, 0.0, 1.0);
+    this.brake = clamp(this.brake, 0.0, 1.0);
+    return { throttle: this.throttle, brake: this.brake, filteredTarget: this.filteredTarget };
+  }
+}
+
+class LaneUtilityModel {
+  constructor(config = {}) {
+    this.minImprovement = config.minImprovement ?? 0.18;
+    this.minFrontGap = config.minFrontGap ?? 25.0;
+    this.minRearGap = config.minRearGap ?? 20.0;
+    this.minRearTTC = config.minRearTTC ?? 4.5;
+  }
+  evaluate(curLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature = 0) {
+    const laneStats = [];
+    for (let laneIdx = 0; laneIdx < totalLanes; laneIdx++) {
+      const laneCenter = track.laneLat ? track.laneLat('fwd', laneIdx) : laneIdx * 3.6;
+      let count = 0;
+      let frontDist = Infinity, frontSpeed = cruiseSpeed, frontTTC = Infinity;
+      let rearDist = Infinity, rearSpeed = 0, rearTTC = Infinity;
+      let speedSum = 0;
+
+      for (const obj of perceivedObjects || []) {
+        if (Math.abs((obj.lat ?? 0) - laneCenter) > 1.9) continue;
+        const relS = track.wrapS ? track.wrapS(obj.s - egoS) : (obj.s - egoS);
+        const objSpeed = obj.vAlong ?? obj.speed ?? obj.v ?? 0;
+        if (relS > -50 && relS < 130) { count++; speedSum += objSpeed; }
+        if (relS > 0.5 && relS < frontDist) {
+          frontDist = relS;
+          frontSpeed = objSpeed;
+          const closing = egoSpeed - objSpeed;
+          frontTTC = closing > 0.2 ? relS / closing : Infinity;
+        }
+        if (relS < -0.5 && Math.abs(relS) < rearDist) {
+          rearDist = Math.abs(relS);
+          rearSpeed = objSpeed;
+          const rearClosing = objSpeed - egoSpeed;
+          rearTTC = rearClosing > 0.2 ? Math.abs(relS) / rearClosing : Infinity;
+        }
+      }
+      const avgSpeed = count > 0 ? speedSum / count : cruiseSpeed;
+      const speedBenefit = clamp(avgSpeed / Math.max(5.0, cruiseSpeed), 0.0, 1.0);
+      const spaceBenefit = clamp(frontDist / 80.0, 0.0, 1.0);
+      const densityBenefit = clamp(1.0 - (count / 5.0), 0.0, 1.0);
+
+      let switchPenalty = (laneIdx !== curLane) ? 0.22 : 0.0;
+      let curveRisk = Math.abs(upcomingCurvature) > 0.0075 ? 0.40 : 0.0;
+      let rearFastRisk = (rearTTC < this.minRearTTC) ? 1.0 : 0.0;
+
+      const score = (0.42 * speedBenefit + 0.35 * spaceBenefit + 0.23 * densityBenefit)
+                    - switchPenalty - curveRisk - rearFastRisk;
+
+      let isSafe = true;
+      if (frontDist < 18.0) isSafe = false;
+      else if (frontDist < this.minFrontGap && (egoSpeed - frontSpeed) > -0.5) isSafe = false;
+      else if (rearDist < 18.0) isSafe = false;
+      else if (rearDist < this.minRearGap && (rearSpeed - egoSpeed) > -0.5) isSafe = false;
+      else if (rearTTC < this.minRearTTC) isSafe = false;
+      else if (frontTTC < 2.5) isSafe = false;
+      else if (Math.abs(upcomingCurvature) > 0.009) isSafe = false;
+
+      laneStats.push({ laneIdx, laneCenter, count, frontDist, frontSpeed, frontTTC, rearDist, rearSpeed, rearTTC, avgSpeed, score, isSafe });
+    }
+
+    const currentLaneStat = laneStats[curLane] || laneStats[0];
+    let bestLane = curLane;
+    let highestScore = currentLaneStat ? currentLaneStat.score : 0;
+    let shouldChange = false;
+
+    for (let laneIdx = 0; laneIdx < totalLanes; laneIdx++) {
+      if (laneIdx === curLane) continue;
+      const cand = laneStats[laneIdx];
+      if (cand && cand.isSafe && cand.score > highestScore + this.minImprovement) {
+        highestScore = cand.score;
+        bestLane = laneIdx;
+        shouldChange = true;
+      }
+    }
+    return { currentLane: curLane, bestLane, shouldChange, laneStats };
+  }
+}
+
+class LaneChangeStateMachine {
+  constructor(config = {}) {
+    this.state = 'KEEP_LANE';
+    this.intent = 'NORMAL_LANE_CHANGE'; // 'DRIVER_REQUEST' | 'NORMAL_LANE_CHANGE' | 'EMERGENCY_LANE_CHANGE' | 'ABORT'
+    this.currentLane = 0;
+    this.targetLane = 0;
+    this.startLat = 0.0;
+    this.targetLat = 0.0;
+    this.latPosition = 0.0;
+    this.timer = 0.0;
+    this.transitionDuration = config.duration ?? 2.2;
+    this.cooldown = 0.0;
+    this.utilityModel = new LaneUtilityModel();
+  }
+  reset() {
+    this.state = 'KEEP_LANE';
+    this.intent = 'NORMAL_LANE_CHANGE';
+    this.currentLane = 0;
+    this.targetLane = 0;
+    this.latPosition = 0.0;
+    this.timer = 0.0;
+    this.cooldown = 0.0;
+  }
+  update(dt, reqDir, egoLat, egoS, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature = 0) {
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    this.timer += dt;
+    const currentLaneIdx = Math.round((egoLat - (track.laneLat ? track.laneLat('fwd', 0) : 0)) / 3.6);
+    this.currentLane = clamp(currentLaneIdx, 0, totalLanes - 1);
+    const curCenter = track.laneLat ? track.laneLat('fwd', this.currentLane) : egoLat;
+
+    const utilResult = this.utilityModel.evaluate(
+      this.currentLane, egoS, egoLat, egoSpeed, cruiseSpeed, totalLanes, perceivedObjects, track, upcomingCurvature
+    );
+
+    switch (this.state) {
+      case 'KEEP_LANE':
+        this.latPosition = curCenter;
+        if (this.cooldown <= 0) {
+          let desiredLane = this.currentLane;
+          if (reqDir !== 0) {
+            desiredLane = clamp(this.currentLane + reqDir, 0, totalLanes - 1);
+            this.intent = 'DRIVER_REQUEST';
+          } else if (utilResult.shouldChange) {
+            desiredLane = utilResult.bestLane;
+            this.intent = 'NORMAL_LANE_CHANGE';
+          }
+
+          if (desiredLane !== this.currentLane) {
+            const targetStat = utilResult.laneStats[desiredLane];
+            if (targetStat && targetStat.isSafe) {
+              this.targetLane = desiredLane;
+              this.startLat = egoLat;
+              this.targetLat = track.laneLat ? track.laneLat('fwd', desiredLane) : desiredLane * 3.6;
+              this.state = 'PREPARE';
+              this.timer = 0.0;
+            }
+          }
+        }
+        break;
+
+      case 'PREPARE':
+        this.latPosition = curCenter;
+        const targetStat = utilResult.laneStats[this.targetLane];
+        if (targetStat && targetStat.isSafe) {
+          this.state = 'LANE_CHANGE';
+          this.startLat = egoLat;
+          this.targetLat = track.laneLat ? track.laneLat('fwd', this.targetLane) : this.targetLane * 3.6;
+          this.timer = 0.0;
+        } else if (this.timer > 2.5) {
+          this.state = 'ABORT';
+          this.intent = 'ABORT';
+          this.timer = 0.0;
+        }
+        break;
+
+      case 'LANE_CHANGE': {
+        const tau = clamp(this.timer / this.transitionDuration, 0.0, 1.0);
+        const smoothU = tau * tau * tau * (10 - 15 * tau + 6 * tau * tau);
+        this.latPosition = this.startLat + (this.targetLat - this.startLat) * smoothU;
+
+        if (tau < 0.4) {
+          const checkStat = utilResult.laneStats[this.targetLane];
+          if (checkStat && !checkStat.isSafe) {
+            this.state = 'ABORT';
+            this.intent = 'ABORT';
+            this.startLat = egoLat;
+            this.targetLat = curCenter;
+            this.timer = 0.0;
+            break;
+          }
+        }
+
+        if (tau >= 1.0) {
+          this.latPosition = this.targetLat;
+          this.state = 'COMPLETE';
+          this.timer = 0.0;
+        }
+        break;
+      }
+
+      case 'COMPLETE':
+        this.currentLane = this.targetLane;
+        this.cooldown = 3.5;
+        this.state = 'KEEP_LANE';
+        break;
+
+      case 'ABORT': {
+        const tau = clamp(this.timer / 1.5, 0.0, 1.0);
+        const smoothU = tau * tau * (3 - 2 * tau);
+        this.latPosition = this.startLat + (curCenter - this.startLat) * smoothU;
+        if (tau >= 1.0) {
+          this.latPosition = curCenter;
+          this.cooldown = 4.0;
+          this.state = 'KEEP_LANE';
+        }
+        break;
+      }
+    }
+
+    return {
+      state: this.state,
+      targetLateral: this.latPosition,
+      active: this.state === 'LANE_CHANGE' || this.state === 'ABORT',
+      targetLane: this.targetLane,
+      utilResult
+    };
+  }
+}
+
+class LaneKeepController {
+  constructor(config = {}) {
+    this.dt = config.dt ?? 1.0 / 30.0;
+    this.wheelbase = config.wheelbase ?? 3.2;        // m
+    this.kUndersteer = config.kUndersteer ?? 0.16;   // s
+    this.tauSteer = config.tauSteer ?? 0.08;         // s (actuator lag)
+    this.tauFilt = config.tauFilt ?? 0.15;           // s (curvature filter time constant)
+    this.maxSlew = config.maxSlew ?? 6.0;            // Slew rate limit (rad/s)
+    this.ki = config.ki ?? 0.15;                     // Integral trim gain
+    this.iLimit = config.iLimit ?? 0.30;             // Anti-windup clamp (+/- 0.3)
+    this.deadbandLat = config.deadbandLat ?? 0.02;   // m (suppress micro-hunting)
+    this.deadbandHead = config.deadbandHead ?? 0.008;// rad
+    this.integral = 0.0;
+    this.filteredKappa = 0.0;
+    this.prevRaw = null;
+    this.steer = 0.0;
+  }
+  reset(steer = 0.0) {
+    this.steer = clamp(steer, -1.0, 1.0);
+    this.prevRaw = null;
+    this.integral = 0.0;
+    this.filteredKappa = 0.0;
+  }
+  update(eLat, ePsi, kappaPreview, v, omega) {
+    if (![eLat, ePsi, kappaPreview, v, omega].every(Number.isFinite)) return this.steer;
+    v = Math.max(v, 0.0);
+    const vKmh = v * 3.6;
+    const wrappedHeading = wrapAngle(ePsi);
+
+    // 1. Cross-Track Gain (smooth speed decay up to 80 km/h)
+    const kLat = 0.44 / (1.0 + 0.022 * v);
+
+    // 2. Heading Alignment Gain
+    const kHead = 0.76 + 0.003 * vKmh;
+
+    // 3. Speed-Scheduled Yaw Damping (critically damps yaw rate at high speeds)
+    const kDamp = 0.16 + 0.003 * vKmh;
+
+    // 4. Low-pass filter kappa_preview with tau_filt = 0.15s
+    const filtAlpha = clamp(this.dt / Math.max(this.dt, this.tauFilt), 0.0, 1.0);
+    this.filteredKappa += (kappaPreview - this.filteredKappa) * filtAlpha;
+
+    // 5. Curvature Feedforward
+    const ff = this.filteredKappa * (this.wheelbase + v * this.kUndersteer);
+
+    // 6. Smooth C^inf Convergence Scaling (tanh blend)
+    let effectiveKLat = kLat;
+    const isConverging = (eLat > 0 && wrappedHeading < -0.01) || (eLat < 0 && wrappedHeading > 0.01);
+    if (isConverging) {
+      effectiveKLat *= (0.60 + 0.40 * Math.tanh(Math.abs(eLat) / 0.45));
+    }
+
+    // Smooth quadratic deadband near lane center
+    if (Math.abs(eLat) < this.deadbandLat) {
+      const u = Math.abs(eLat) / this.deadbandLat;
+      effectiveKLat *= (u * u);
+    }
+
+    // 7. Integral Trim on Cross-Track Error (active in near-center band with anti-windup)
+    if (Math.abs(eLat) < 0.35) {
+      this.integral += eLat * this.dt;
+      const maxIntegral = this.iLimit / this.ki;
+      this.integral = clamp(this.integral, -maxIntegral, maxIntegral);
+    } else {
+      this.integral *= 0.85;
+    }
+    const iTrim = this.ki * this.integral;
+
+    // 8. Raw Feedback Law
+    let raw = effectiveKLat * eLat - kHead * wrappedHeading + ff + iTrim;
+
+    // 9. Excess-Yaw Damping
+    const excessYawRate = omega - v * this.filteredKappa;
+    const damping = kDamp * excessYawRate;
+    raw -= damping;
+
+    // 10. Actuator Phase Lead Compensation
+    let leadRaw = raw;
+    if (this.prevRaw !== null) {
+      const rawDelta = raw - this.prevRaw;
+      const leadAlpha = 0.40 * (this.tauSteer / this.dt);
+      leadRaw = raw + clamp(leadAlpha * rawDelta, -0.06, 0.06);
+    }
+    this.prevRaw = raw;
+
+    // 11. Speed-Adaptive Slew Rate Limiter
+    const speedSlewFactor = clamp(1.0 - (v / 60.0) * 0.35, 0.65, 1.0);
+    const maxStep = this.maxSlew * speedSlewFactor * this.dt;
+    const cmd = clamp(leadRaw, -1.0, 1.0);
+    this.steer = clamp(this.steer + clamp(cmd - this.steer, -maxStep, maxStep), -1.0, 1.0);
+    return this.steer;
+  }
+}
+
+// Controller instances
+const longPID = new LongitudinalPID();
+const idmFollower = new IDMController();
+const curveGov = new CurvatureGovernor();
+const stopDistModel = new StoppingDistanceModel();
+const alcMachine = new LaneChangeStateMachine();
+const lkaController = new LaneKeepController();
+const riskStateMachine = new RiskStateMachine();
+const alc = { reqDir: 0 };
+function alcRequest(dir) { alc.reqDir = dir; }
+function resetALC() {
+  alc.reqDir = 0;
+  alcMachine.reset();
+  longPID.reset();
+  lkaController.reset();
+  riskStateMachine.reset();
+}
+
+// Phase 6 & 9: Longitudinal Proposal Generator (ACC / IDM / Curve / SPAT)
+function generateLongitudinalProposal(egoSpeed, cruiseSpeed, dt, highestRiskThreat, riskLevel, track, egoS, lookaheadK, upcomingCurvature) {
+  const proposal = {
+    active: true,
+    targetSpeed: cruiseSpeed,
+    throttle: 0.0,
+    brake: 0.0,
+    reason: 'CRUISE',
+    action: 'CRUISE',
+    govActive: false,
+    sigActive: false,
+    v2vActive: false,
+    alert: null,
+    sev: 'amber'
+  };
+
+  let safeSpeed = cruiseSpeed;
+
+  // 1. Curvature Governor Profile
+  if (adas.gov) {
+    const gov = curveGov.evaluate(track, egoS, egoSpeed, cruiseSpeed);
+    if (gov.safeSpeed < safeSpeed) {
+      safeSpeed = gov.safeSpeed;
+      proposal.govActive = gov.governorActive;
+      if (proposal.govActive) {
+        proposal.alert = 'CURVE GOVERNOR — SLOWING FOR TURN';
+        proposal.reason = 'CURVE_GOV';
+      }
+    }
   }
 
-  /* ---- signal stop (map + SPAT) ---- */
+  // 2. SPAT Signal Stop
   if (SENS.signal && SENS.signal.state !== 'green') {
     const d = SENS.signal.dist;
-    const vStop = Math.sqrt(2 * 2.6 * Math.max(d - 2.5, 0));
-    const canStop = d > (u * u) / (2 * 3.4) + 1.5;
+    const vStop = Math.sqrt(Math.max(0, 2 * 2.6 * (d - 2.5)));
+    const canStop = d > (egoSpeed * egoSpeed) / (2 * 3.4) + 1.5;
     if (SENS.signal.state === 'red' || canStop) {
-      if (vStop < vt) { vt = vStop; out.sigActive = true; }
-      if (d < 2.5 && u < 1.5) vt = 0;
-      if (!out.alert) out.alert = `I2V · SIGNAL ${SENS.signal.state.toUpperCase()} — STOPPING`;
+      if (vStop < safeSpeed) {
+        safeSpeed = vStop;
+        proposal.sigActive = true;
+        proposal.reason = 'SIGNAL';
+        proposal.alert = `I2V · SIGNAL ${SENS.signal.state.toUpperCase()} — STOPPING`;
+      }
+      if (d < 2.5 && egoSpeed < 1.5) safeSpeed = 0;
     }
   }
 
-  /* ---- oncoming threat: EARLY change, steering-first ---- */
-  if (T.def.lanesO > 0) {
-    let threat = null, tTtc = 1e9, tLat = 0;
-    for (const p of perceived) {
-      if (p.v > -0.5) continue;
-      const g = sRel(p);
-      if (g <= 0 || g > 220) continue;
-      const latSep = Math.abs(p.lat - egoLat);
-      if (latSep > 2.9) continue;
-      const closing = u + (-p.v);
-      const ttc = g / Math.max(closing, 2);
-      if (ttc < tTtc) { tTtc = ttc; threat = p; tLat = p.lat; }
+  // 3. IDM Following / Stopping Distance Model (Lead Vehicle)
+  if (highestRiskThreat && highestRiskThreat.isAhead && highestRiskThreat.isSameLane) {
+    const leadDist = highestRiskThreat.distance;
+    const leadSpeed = Math.max(0, highestRiskThreat.v);
+    const leadRelV = highestRiskThreat.relativeSpeed;
+    const isBraking = highestRiskThreat.braking || (highestRiskThreat.source === 'V2V' && leadSpeed < egoSpeed - 3);
+
+    proposal.v2vActive = highestRiskThreat.source === 'V2V' || highestRiskThreat.source === 'FUSED';
+
+    const idm = idmFollower.evaluate(egoSpeed, safeSpeed, leadDist, leadRelV, isBraking, highestRiskThreat.ttc);
+    safeSpeed = Math.min(safeSpeed, idm.targetSpeed);
+
+    const stopSpeedCeil = stopDistModel.calculateSafeSpeed(leadDist, leadSpeed);
+    safeSpeed = Math.min(safeSpeed, stopSpeedCeil);
+
+    const closingCeil = stopDistModel.calculateClosingSpeedCeiling(leadDist, leadSpeed);
+    safeSpeed = Math.min(safeSpeed, closingCeil);
+
+    if (riskLevel === 'CAUTION' && isBraking) {
+      proposal.alert = 'FCW · LEAD BRAKING AHEAD (RADIO)';
+      proposal.reason = 'ACC_FOLLOW';
+    } else if (leadDist < idm.desiredGap * 1.4 && !proposal.alert) {
+      proposal.alert = 'ACC · FOLLOWING — SPEED CONTROL';
+      proposal.reason = 'ACC_FOLLOW';
     }
-    if (threat) {
-      out.evasive = true;
-      const away = Math.sign(egoLat - tLat) || 1;
-      const awayLane = curLane + away;
-      if (tTtc < 2.5) {
-        evasiveHard = true;
-        out.steer = away * 0.95;
-        emergency = true;
-        out.alert = 'DANGER · ONCOMING — STEER AWAY';
-        out.sev = 'red';
-      } else if (tTtc < 7.5 && awayLane >= 0 && awayLane < lanesF && laneClearP(awayLane, 20, 40)) {
-        if (st.phase !== 'move' || st.targetLane !== awayLane) {
-          st.phase = 'move'; st.fromLane = curLane; st.targetLane = awayLane;
-          st.latNow = egoLat; st.timer = 0; st.returning = false;
-        }
-        out.alcActive = true;
-        vt = Math.min(vt, u);
-        out.alert = 'ONCOMING — EVASIVE LANE CHANGE';
-      } else if (tTtc < 7.5) {
-        out.steer = away * 0.5;
-        out.alert = 'ONCOMING — STEERING CLEAR'; out.sev = 'red';
+  }
+
+  safeSpeed = clamp(safeSpeed, 0, MAX_AUTONOMOUS_SPEED);
+  proposal.targetSpeed = safeSpeed;
+
+  const pid = longPID.update(egoSpeed, safeSpeed, dt, 0);
+  proposal.throttle = pid.throttle;
+  proposal.brake = pid.brake;
+
+  return proposal;
+}
+
+// Phase 6 & 9: AEB Proposal Generator
+function generateAEBProposal(egoSpeed, highestRiskThreat, riskLevel) {
+  const proposal = {
+    active: false,
+    throttle: 0.0,
+    brake: 0.0,
+    reason: 'AEB_NONE',
+    alert: null,
+    sev: 'red',
+    priority: 90
+  };
+
+  if (!adas.aeb || !highestRiskThreat || !highestRiskThreat.isAhead || !highestRiskThreat.isSameLane) {
+    return proposal;
+  }
+
+  const ttc = highestRiskThreat.ttc;
+  const dist = highestRiskThreat.distance;
+
+  if (riskLevel === 'CRITICAL' || ttc < RISK_THRESHOLDS.TTC_CRITICAL_ENTER || dist < RISK_THRESHOLDS.GAP_CRITICAL) {
+    proposal.active = true;
+    proposal.brake = 1.0;
+    proposal.throttle = 0.0;
+    proposal.reason = 'AEB_CRITICAL';
+    proposal.alert = highestRiskThreat.source === 'V2V'
+      ? 'FCW · IMMINENT (RADIO) — FULL AUTO BRAKE'
+      : 'AEB · CRITICAL DISTANCE — FULL BRAKE';
+    proposal.sev = 'red';
+  } else if (riskLevel === 'HIGH' || ttc < RISK_THRESHOLDS.TTC_HIGH_ENTER || dist < RISK_THRESHOLDS.GAP_HIGH) {
+    proposal.active = true;
+    proposal.brake = clamp((RISK_THRESHOLDS.TTC_HIGH_ENTER - ttc) / 1.7, 0.45, 0.85);
+    proposal.throttle = 0.0;
+    proposal.reason = 'AEB_DECEL';
+    proposal.alert = 'FCW · COLLISION PREDICTION — DECELERATING';
+    proposal.sev = 'red';
+  }
+
+  return proposal;
+}
+
+// Phase 6 & 10: LKA Proposal Generator
+function generateLKAProposal(egoLat, targetLat, proj, track, egoSpeed, om, lkaEnabled) {
+  const proposal = {
+    active: false,
+    steer: 0.0,
+    reason: 'LKA',
+    priority: 40
+  };
+
+  if (!lkaEnabled) return proposal;
+
+  const latErr = egoLat - targetLat;
+  const headingErr = wrapAngle(dyn.psi - proj.psi);
+  const previewDist = Math.max(8.0, egoSpeed * 0.8);
+  const sampleSteps = 5;
+  let kappaSum = 0;
+  for (let i = 0; i < sampleSteps; i++) {
+    const sSample = proj.s + (i / (sampleSteps - 1)) * previewDist;
+    kappaSum += track.kappaAt ? track.kappaAt(sSample) : (proj.kappa || 0);
+  }
+  const kappaPreview = kappaSum / sampleSteps;
+
+  proposal.steer = lkaController.update(latErr, headingErr, kappaPreview, egoSpeed, om);
+  proposal.active = Math.abs(latErr) > 0.012;
+  return proposal;
+}
+
+// Phase 10, 11, 12: Lane Change Proposal Generator
+function generateLaneChangeProposal(alcMachine, dt, reqDir, egoLat, egoS, egoSpeed, cruiseSpeed, lanesF, perceived, track, upcomingCurvature, riskLevel, highestRiskThreat) {
+  const proposal = {
+    active: false,
+    targetLat: egoLat,
+    steer: 0.0,
+    state: 'KEEP_LANE',
+    intent: 'NORMAL_LANE_CHANGE',
+    reason: 'ALC',
+    alert: null,
+    sev: 'amber',
+    priority: 50
+  };
+
+  if (!adas.alc && reqDir === 0) return proposal;
+
+  const lc = alcMachine.update(dt, reqDir, egoLat, egoS, egoSpeed, cruiseSpeed, lanesF, perceived, track, upcomingCurvature);
+  proposal.active = lc.active;
+  proposal.targetLat = lc.targetLateral;
+  proposal.state = lc.state;
+  proposal.intent = alcMachine.intent || 'NORMAL_LANE_CHANGE';
+
+  if (lc.active) {
+    proposal.priority = proposal.intent === 'EMERGENCY_LANE_CHANGE' ? 70 : 50;
+    if (lc.state === 'ABORT') {
+      proposal.alert = 'ALC · RETURNING (OCCUPIED)';
+      proposal.sev = 'amber';
+    } else {
+      proposal.alert = proposal.intent === 'EMERGENCY_LANE_CHANGE'
+        ? `EMERGENCY ESCAPE · LANE ${lc.targetLane + 1}`
+        : `ALC · LANE CHANGE (LANE ${lc.targetLane + 1})`;
+      proposal.sev = proposal.intent === 'EMERGENCY_LANE_CHANGE' ? 'red' : 'amber';
+    }
+  }
+
+  return proposal;
+}
+
+// Phase 11, 13: Emergency Avoidance Proposal Generator (Escape Lane / Direction Selection / Braking Fallback)
+function generateEmergencyAvoidanceProposal(egoLat, egoS, egoSpeed, highestRiskThreat, riskLevel, totalLanes, perceived, track) {
+  const proposal = {
+    active: false,
+    steer: null,
+    brake: 0.0,
+    throttle: 0.0,
+    dir: 'NONE',
+    reason: 'NONE',
+    alert: null,
+    priority: 100
+  };
+
+  if (riskLevel !== 'CRITICAL' && riskLevel !== 'HIGH') return proposal;
+  if (!highestRiskThreat || !highestRiskThreat.isAhead || !highestRiskThreat.isSameLane) return proposal;
+
+  // If TTC is critical (< 1.6s) or critically low gap, evaluate lateral escape vs straight-line braking
+  const curLane = nearestLaneIdx(track, egoLat);
+  const leftLane = curLane - 1;
+  const rightLane = curLane + 1;
+
+  function evaluateLaneSafety(targetLaneIdx) {
+    if (targetLaneIdx < 0 || targetLaneIdx >= totalLanes) return { safe: false, score: -999 };
+    const center = track.laneLat ? track.laneLat('fwd', targetLaneIdx) : targetLaneIdx * 3.6;
+    let minFrontDist = Infinity, minRearDist = Infinity, minFrontTTC = Infinity, minRearTTC = Infinity;
+
+    for (const p of (perceived || [])) {
+      if (Math.abs((p.lat ?? 0) - center) > 1.9) continue;
+      const relS = track.wrapS ? track.wrapS(p.s - egoS) : (p.s - egoS);
+      const pSpeed = p.vAlong ?? p.speed ?? p.v ?? 0;
+      if (relS > 0.5 && relS < minFrontDist) {
+        minFrontDist = relS;
+        const closing = egoSpeed - pSpeed;
+        minFrontTTC = closing > 0.2 ? relS / closing : Infinity;
+      } else if (relS < -0.5 && Math.abs(relS) < minRearDist) {
+        minRearDist = Math.abs(relS);
+        const rearClosing = pSpeed - egoSpeed;
+        minRearTTC = rearClosing > 0.2 ? Math.abs(relS) / rearClosing : Infinity;
       }
     }
+
+    const safe = (minFrontDist > 16.0 && minFrontTTC > 2.5 && minRearDist > 14.0 && minRearTTC > 3.0);
+    const score = Math.min(minFrontDist, 60) + Math.min(minRearDist, 40) + Math.min(minFrontTTC, 10) * 5;
+    return { safe, score };
   }
 
-  /* ---- pedals: slew-limited, evasive caps brake (grip budget) ---- */
-  const e = vt - u;
-  let thT = clamp(e * 0.35, 0, 0.85), brT = 0;
-  if (emergency) brT = evasiveHard ? 0.45 : 1;
-  else if (e < -1.2) brT = clamp((-e - 1.2) * 0.25, 0, 0.6);
-  else if (e < -0.35) thT = 0;
-  pedSlew.th += clamp(thT - pedSlew.th, -3.5 * dt, 1.6 * dt);
-  pedSlew.br += clamp(brT - pedSlew.br, -5 * dt, 3.5 * dt);
-  out.throttle = pedSlew.th; out.brake = pedSlew.br; out.vt = vt;
+  const leftEval = evaluateLaneSafety(leftLane);
+  const rightEval = evaluateLaneSafety(rightLane);
 
-  /* ---- LKA: holds the CURRENT lane, only with no maneuver input ---- */
-  if (!out.evasive && (adas.lka || out.alcActive)) {
-    const latTarget = out.alcActive ? st.latNow : centerOf(curLane);
-    if (Math.abs(egoLat - latTarget) < 3.4) {
-      const corr = clamp(0.055 * (egoLat - latTarget) - 0.6 * wrapAngle(dyn.psi - proj.psi), -0.15, 0.15);
-      out.steer = clamp(corr / 0.56, -1, 1);
-      out.lkaActive = !out.alcActive && Math.abs(corr) > 0.015;
+  let chosenDir = 'NONE';
+  if (leftEval.safe && rightEval.safe) {
+    chosenDir = leftEval.score >= rightEval.score ? 'LEFT' : 'RIGHT';
+  } else if (leftEval.safe) {
+    chosenDir = 'LEFT';
+  } else if (rightEval.safe) {
+    chosenDir = 'RIGHT';
+  } else {
+    chosenDir = 'BRAKE_ONLY';
+  }
+
+  if (chosenDir === 'LEFT' || chosenDir === 'RIGHT') {
+    proposal.active = true;
+    proposal.dir = chosenDir;
+    proposal.reason = `EVASIVE_STEER_${chosenDir}`;
+    proposal.alert = `EMERGENCY EVASION · AVOIDING COLLISION (${chosenDir})`;
+    proposal.brake = 0.35;
+    proposal.throttle = 0.0;
+  } else if (chosenDir === 'BRAKE_ONLY') {
+    // If no safe escape lane exists, enforce maximum straight-line emergency braking
+    proposal.active = true;
+    proposal.dir = 'BRAKE_ONLY';
+    proposal.reason = 'EMERGENCY_BRAKE_LOCKED_LANE';
+    proposal.brake = 1.0;
+    proposal.throttle = 0.0;
+    proposal.alert = 'EMERGENCY BRAKE · ESCAPE PATHS BLOCKED';
+  }
+
+  return proposal;
+}
+
+// Phase 7, 8, 9, 10, 15: Central Control Arbitrator
+function arbitrateControl(riskLevel, proposals, manualInput, mode, adasFlags) {
+  const finalControl = {
+    steer: 0.0,
+    throttle: 0.0,
+    brake: 0.0,
+    lateralAuthority: 'MANUAL',
+    longitudinalAuthority: 'MANUAL',
+    selectedAction: 'NORMAL',
+    alert: null,
+    sev: 'amber',
+    lkaActive: false,
+    govActive: false,
+    aebActive: false,
+    v2vActive: false,
+    alcActive: false,
+    sigActive: false,
+    evasive: false
+  };
+
+  // 1. LATERAL ARBITRATION
+  // Priority: Emergency Avoidance (100) > Emergency Lane Change (70) > Driver ALC (50) > LKA (40) > Manual (10)
+  if (proposals.emergencyAvoidance && proposals.emergencyAvoidance.active && proposals.emergencyAvoidance.dir !== 'BRAKE_ONLY' && proposals.emergencyAvoidance.dir !== 'NONE') {
+    const steerMag = proposals.emergencyAvoidance.dir === 'LEFT' ? -0.45 : 0.45;
+    finalControl.steer = steerMag;
+    finalControl.lateralAuthority = 'EMERGENCY_AVOIDANCE';
+    finalControl.evasive = true;
+  } else if (proposals.laneChange && proposals.laneChange.active && proposals.laneChange.steer !== undefined && proposals.laneChange.steer !== 0) {
+    finalControl.steer = proposals.laneChange.steer;
+    finalControl.lateralAuthority = proposals.laneChange.intent === 'EMERGENCY_LANE_CHANGE' ? 'EMERGENCY_LANE_CHANGE' : 'ALC';
+    finalControl.alcActive = true;
+  } else if (proposals.lka && proposals.lka.active && (mode === 'v2v' ? (riskLevel !== 'NORMAL' || adasFlags.lka) : adasFlags.lka)) {
+    finalControl.steer = proposals.lka.steer;
+    finalControl.lateralAuthority = 'LKA';
+    finalControl.lkaActive = true;
+  } else {
+    finalControl.steer = manualInput.steer;
+    finalControl.lateralAuthority = 'MANUAL';
+  }
+
+  // 2. LONGITUDINAL ARBITRATION
+  // Priority: Emergency Avoidance (100) > AEB (90) > Longitudinal/ACC (30) > Manual (10)
+  if (proposals.emergencyAvoidance && proposals.emergencyAvoidance.active && proposals.emergencyAvoidance.brake > 0) {
+    finalControl.throttle = 0.0;
+    finalControl.brake = proposals.emergencyAvoidance.brake;
+    finalControl.longitudinalAuthority = 'EMERGENCY_AVOIDANCE';
+    finalControl.selectedAction = proposals.emergencyAvoidance.dir === 'BRAKE_ONLY' ? 'EMERGENCY_BRAKE' : 'EMERGENCY_EVASION';
+  } else if (proposals.aeb && proposals.aeb.active) {
+    finalControl.throttle = 0.0;
+    finalControl.brake = proposals.aeb.brake;
+    finalControl.longitudinalAuthority = 'AEB';
+    finalControl.aebActive = true;
+    finalControl.selectedAction = proposals.aeb.brake >= 0.9 ? 'EMERGENCY_BRAKE' : 'COLLISION_BRAKE';
+  } else if (proposals.longitudinal && proposals.longitudinal.active) {
+    finalControl.throttle = proposals.longitudinal.throttle;
+    finalControl.brake = proposals.longitudinal.brake;
+    finalControl.longitudinalAuthority = proposals.longitudinal.reason || 'ACC';
+    finalControl.selectedAction = proposals.longitudinal.action || 'FOLLOW';
+    finalControl.govActive = proposals.longitudinal.govActive || false;
+    finalControl.sigActive = proposals.longitudinal.sigActive || false;
+    finalControl.v2vActive = proposals.longitudinal.v2vActive || false;
+  } else {
+    finalControl.throttle = manualInput.throttle;
+    finalControl.brake = manualInput.brake;
+    finalControl.longitudinalAuthority = 'MANUAL';
+    finalControl.selectedAction = 'NORMAL_DRIVING';
+  }
+
+  // Proximity blind spot check
+  const prox = SENS.proximity;
+  if (prox && adasFlags.aeb) {
+    if (prox.left < 2.2 && finalControl.steer > 0.05) {
+      finalControl.steer = Math.min(finalControl.steer, 0.02);
+      if (!finalControl.alert) { finalControl.alert = 'BLIND SPOT · LEFT PROXIMITY'; finalControl.sev = 'amber'; }
+    }
+    if (prox.right < 2.2 && finalControl.steer < -0.05) {
+      finalControl.steer = Math.max(finalControl.steer, -0.02);
+      if (!finalControl.alert) { finalControl.alert = 'BLIND SPOT · RIGHT PROXIMITY'; finalControl.sev = 'amber'; }
     }
   }
-  return out;
+
+  // Alert propagation
+  if (proposals.emergencyAvoidance && proposals.emergencyAvoidance.alert) {
+    finalControl.alert = proposals.emergencyAvoidance.alert;
+    finalControl.sev = 'red';
+  } else if (proposals.aeb && proposals.aeb.alert) {
+    finalControl.alert = proposals.aeb.alert;
+    finalControl.sev = proposals.aeb.sev || 'red';
+  } else if (proposals.laneChange && proposals.laneChange.alert) {
+    finalControl.alert = proposals.laneChange.alert;
+    finalControl.sev = proposals.laneChange.sev || 'amber';
+  } else if (proposals.longitudinal && proposals.longitudinal.alert) {
+    finalControl.alert = proposals.longitudinal.alert;
+    finalControl.sev = proposals.longitudinal.sev || 'amber';
+  }
+
+  return finalControl;
+}
+
+// Phase 8 & 15: Authoritative Policy Computation
+function computePolicy(dt, proj, et) {
+  const u = Math.max(dyn.u, 0.001);
+  const perceived = SENS.perceived || [];
+  const egoS = proj.s, egoLat = proj.lat;
+  const curLane = nearestLaneIdx(T, egoLat);
+  const lanesF = T.def ? T.def.lanesF : 2;
+  const curLaneCenter = T.laneLat ? T.laneLat('fwd', curLane) : egoLat;
+  const effectiveCruise = clamp(player.cruise, 0, MAX_AUTONOMOUS_SPEED);
+
+  // 1. Unified Threat Evaluation & Risk State Machine
+  const threatEval = evaluateThreats(dyn, perceived, T, et ?? lastSenseT);
+  const highestRiskThreat = threatEval.highestRiskThreat;
+  const riskLevel = riskStateMachine.update(highestRiskThreat, dt);
+
+  // 2. Curvature Lookahead
+  let upcomingCurvature = 0;
+  if (adas.gov) {
+    const gov = curveGov.evaluate(T, egoS, u, effectiveCruise);
+    upcomingCurvature = gov.upcomingCurvature || 0;
+  }
+
+  // 3. Lane Target & Lane Change State Machine
+  let targetLat = curLaneCenter;
+  let alcProposal = { active: false, targetLat: curLaneCenter, steer: 0, state: 'KEEP_LANE', intent: 'NORMAL_LANE_CHANGE', priority: 50 };
+
+  if (adas.alc || alc.reqDir !== 0) {
+    const dirToProcess = alc.reqDir;
+    alc.reqDir = 0;
+    alcProposal = generateLaneChangeProposal(
+      alcMachine, dt, dirToProcess, egoLat, egoS, u, effectiveCruise, lanesF, perceived, T, upcomingCurvature, riskLevel, highestRiskThreat
+    );
+    if (alcProposal.active) {
+      targetLat = alcProposal.targetLat;
+    }
+  }
+
+  // 4. LKA Steering Proposal
+  const lkaProposal = generateLKAProposal(egoLat, targetLat, proj, T, u, dyn.om, adas.lka || alcProposal.active);
+  if (alcProposal.active) {
+    alcProposal.steer = lkaProposal.steer;
+  }
+
+  // 5. Longitudinal & AEB Proposals
+  const longProposal = generateLongitudinalProposal(u, effectiveCruise, dt, highestRiskThreat, riskLevel, T, egoS, proj.kappa || 0, upcomingCurvature);
+  const aebProposal = generateAEBProposal(u, highestRiskThreat, riskLevel);
+
+  // 6. Emergency Avoidance Proposal (Escape Lane / Lateral Evasion)
+  const emergencyProposal = generateEmergencyAvoidanceProposal(egoLat, egoS, u, highestRiskThreat, riskLevel, lanesF, perceived, T);
+
+  // 7. Manual Inputs Default
+  const manualInput = {
+    steer: manSteer.v,
+    throttle: longProposal.throttle,
+    brake: longProposal.brake
+  };
+
+  // 8. Central Control Arbitration
+  const arbitrated = arbitrateControl(riskLevel, {
+    emergencyAvoidance: emergencyProposal,
+    aeb: aebProposal,
+    longitudinal: longProposal,
+    laneChange: alcProposal,
+    lka: lkaProposal
+  }, manualInput, mode, adas);
+
+  // Update global telemetry state
+  telemetryState.mode = mode;
+  telemetryState.riskLevel = riskLevel;
+  telemetryState.highestRiskThreat = highestRiskThreat;
+  telemetryState.threatId = highestRiskThreat ? highestRiskThreat.id : -1;
+  telemetryState.threatSource = highestRiskThreat ? highestRiskThreat.source : 'NONE';
+  telemetryState.ttc = highestRiskThreat ? highestRiskThreat.ttc : Infinity;
+  telemetryState.closingSpeed = highestRiskThreat ? highestRiskThreat.closingSpeed : 0;
+  telemetryState.distance = highestRiskThreat ? highestRiskThreat.distance : Infinity;
+  telemetryState.selectedAction = arbitrated.selectedAction;
+  telemetryState.lateralAuthority = arbitrated.lateralAuthority;
+  telemetryState.longitudinalAuthority = arbitrated.longitudinalAuthority;
+  telemetryState.laneChangeState = alcProposal.state;
+  telemetryState.v2vAge = highestRiskThreat ? (highestRiskThreat.v2vAge ?? 0) : 0;
+
+  return {
+    steer: arbitrated.steer,
+    throttle: arbitrated.throttle,
+    brake: arbitrated.brake,
+    vt: longProposal.targetSpeed,
+    alert: arbitrated.alert,
+    sev: arbitrated.sev,
+    evasive: arbitrated.evasive,
+    lkaActive: arbitrated.lkaActive,
+    govActive: arbitrated.govActive,
+    aebActive: arbitrated.aebActive,
+    v2vActive: arbitrated.v2vActive,
+    alcActive: arbitrated.alcActive,
+    sigActive: arbitrated.sigActive,
+    riskLevel,
+    highestRiskThreat,
+    telemetry: telemetryState
+  };
 }
 
 /* ================================================================
@@ -2403,6 +4185,9 @@ function initEditor(ctx) {
 /* ================================================================
    [UI]
    ================================================================ */
+let rlEnv = null;
+let rlClient = null;
+
 function initUI(env) {
   const $ = id => document.getElementById(id);
   let toastTimer = 0;
@@ -2414,18 +4199,134 @@ function initUI(env) {
     toastTimer = setTimeout(() => t.classList.remove('show'), 1700);
   }
   function updateModeUI() {
-    const v2v = env.getMode() === 'v2v';
-    $('mManual').classList.toggle('on', !v2v);
-    $('mV2v').classList.toggle('on', v2v);
-    $('adasSec').classList.toggle('dim', !v2v);
+    const m = env.getMode();
+    const isDriving = m === 'driving' || m === 'manual';
+    const isPerception = m === 'perception';
+    const isV2v = m === 'v2v';
+    const isDebug = m === 'debug';
+    const isRl = m === 'rl_train' || m === 'rl_eval';
+
+    if ($('mDriving')) $('mDriving').classList.toggle('on', isDriving);
+    if ($('mPerception')) $('mPerception').classList.toggle('on', isPerception);
+    if ($('mV2v')) $('mV2v').classList.toggle('on', isV2v);
+    if ($('mDebug')) $('mDebug').classList.toggle('on', isDebug);
+    
+    $('adasSec').classList.toggle('dim', !isV2v);
+    $('sensorSec').classList.toggle('dim', !isPerception && !isDebug);
+    const rlSec = $('rlSec');
+    if (rlSec) rlSec.style.display = isRl ? 'block' : 'none';
     $('aidsTgl').classList.toggle('on', env.aids.on);
     $('aidsTgl').textContent = env.aids.on ? 'ON' : 'OFF';
-    $('modeHint').textContent = v2v
-      ? 'BSM LINK · ADAS + V2V · W/S = CRUISE · A/D = LANE CHANGE'
-      : (env.aids.on ? 'EYES ONLY · ESC + ABS + EBD ACTIVE' : 'FULLY MANUAL — RAW PHYSICS, NO AIDS');
+
+    let hint = '';
+    if (isDriving) hint = 'DRIVING MODE · WASD PEDALS & STEERING · FULL PHYSICS';
+    else if (isPerception) hint = 'PERCEPTION MODE · SENSOR RAYCASTS · RADAR SWEEP · CAMERA FEED';
+    else if (isV2v) hint = 'V2V AUTONOMOUS MODE · ADAS AUTOPILOT · W/S = CRUISE · A/D = LANE CHANGE';
+    else if (isDebug) hint = 'DEBUG TELEMETRY · TIRE FRICTION CIRCLES · SLIP ANGLES · FORCES';
+    else if (m === 'rl_train') hint = 'RL TRAINING MODE · CONNECT PYTHON TRAINER VIA WEBSOCKET';
+    else if (m === 'rl_eval') hint = 'RL EVALUATION MODE · RUNNING RL POLICY ON PERCEPTION OBS';
+    $('modeHint').textContent = hint;
   }
-  $('mManual').onclick = () => env.api.setMode('manual');
-  $('mV2v').onclick = () => env.api.setMode('v2v');
+  if ($('mDriving')) $('mDriving').onclick = () => env.api.setMode('driving');
+  if ($('mPerception')) $('mPerception').onclick = () => env.api.setMode('perception');
+  if ($('mV2v')) $('mV2v').onclick = () => env.api.setMode('v2v');
+  if ($('mDebug')) $('mDebug').onclick = () => env.api.setMode('debug');
+  if ($('povTgl')) $('povTgl').onclick = () => togglePOV();
+
+  // RL Environment & WebSocket Client Setup
+  rlEnv = new V2VRLEnvironment({ headless: false });
+  rlClient = new RLWebSocketClient(rlEnv, 'ws://localhost:8765');
+  
+  function wireSimToRLEnv() {
+    rlEnv.connectToSim({
+      resetWithScenario: (cfg) => {
+        if (cfg && cfg.tags && cfg.tags.hasOccluded && env.trackDef.barrier !== 'inside') {
+          env.trackDef.barrier = 'inside';
+          env.api.rebuild();
+        }
+        if (cfg && cfg.vehicles && cfg.vehicles.length) {
+          for (let i = 0; i < env.scenario.length && i < cfg.vehicles.length; i++) {
+            const src = cfg.vehicles[i];
+            const dst = env.scenario[i];
+            dst.spawnU = src.spawnU ?? dst.spawnU;
+            dst.speed = src.speed ?? dst.speed;
+            dst.behavior = src.behavior ?? dst.behavior;
+            dst.radio = src.radio ?? dst.radio;
+          }
+        }
+        env.player.spawnU = (cfg && cfg.egoSpawnU != null) ? cfg.egoSpawnU : 0.08;
+        env.api.resetRun();
+      },
+      resetRun: () => env.api.resetRun(),
+      get track() { return env.getTrack ? env.getTrack() : T; },
+      get dyn() { return env.getDyn ? env.getDyn() : dyn; },
+      scenario: env.scenario,
+      updateAIVehicles: (dt) => {
+        const d = env.getDyn ? env.getDyn() : dyn;
+        const proj = T.project(d.x, d.z, env.player ? env.player.hint : 0);
+        updateAI(dt, proj.s, proj.lat, clock.elapsedTime);
+      },
+      runEgoPerception: () => ({ unifiedModel: SENS.perceived, hazards: SENS.perceived })
+    });
+  }
+  wireSimToRLEnv();
+
+  rlClient.onStatusChange = (status) => {
+    const el = $('rlWsStatus');
+    if (!el) return;
+    if (status === 'connected') {
+      el.textContent = 'CONNECTED';
+      el.style.color = '#69f0ae';
+      env.api.setMode('rl_train');
+    } else if (status === 'disconnected') {
+      el.textContent = 'DISCONNECTED';
+      el.style.color = '#ffb454';
+    } else {
+      el.textContent = 'ERROR';
+      el.style.color = '#ff5340';
+    }
+  };
+
+  const btnWs = $('btnConnectWs');
+  if (btnWs) {
+    btnWs.onclick = async () => {
+      wireSimToRLEnv();
+      env.api.setMode('rl_train');
+      try {
+        toast('CONNECTING TO PYTHON RL TRAINER...');
+        await rlClient.connect();
+        toast('CONNECTED TO PYTHON RL TRAINER (ws://localhost:8765)');
+      } catch (err) {
+        toast('WS CONNECT FAILED — MAKE SURE python rl/train.py IS RUNNING');
+      }
+    };
+  }
+
+  const btnRlReset = $('btnRlReset');
+  if (btnRlReset) {
+    btnRlReset.onclick = () => {
+      rlEnv.reset(Math.floor(Math.random() * 99999));
+      toast('RL ENVIRONMENT RESET WITH NEW SEED');
+    };
+  }
+
+  const rlStageSel = $('rlStageSel');
+  if (rlStageSel) {
+    rlStageSel.onchange = () => {
+      rlEnv.curriculumStage = +rlStageSel.value;
+      toast(`CURRICULUM STAGE SET TO ${rlStageSel.value}`);
+    };
+  }
+
+  const rlV2vTgl = $('rlV2vTgl');
+  if (rlV2vTgl) {
+    rlV2vTgl.onclick = () => {
+      rlEnv.v2vEnabled = !rlEnv.v2vEnabled;
+      rlV2vTgl.classList.toggle('on', rlEnv.v2vEnabled);
+      rlV2vTgl.textContent = rlEnv.v2vEnabled ? 'ON' : 'OFF';
+      toast(`RL V2V RADIO ${rlEnv.v2vEnabled ? 'ENABLED' : 'DISABLED'}`);
+    };
+  }
   $('aidsTgl').onclick = () => {
     env.aids.on = !env.aids.on;
     updateModeUI();
@@ -2455,6 +4356,10 @@ function initUI(env) {
   $('vrMinus').onclick = () => { SENS.v2vRange = Math.max(100, SENS.v2vRange - 50); syncVr(); };
   $('vrPlus').onclick = () => { SENS.v2vRange = Math.min(600, SENS.v2vRange + 50); syncVr(); };
 
+  if ($('todNight')) $('todNight').onclick = () => env.api.setTimeOfDay('night');
+  if ($('todDawn')) $('todDawn').onclick = () => env.api.setTimeOfDay('dawn');
+  if ($('todDay')) $('todDay').onclick = () => env.api.setTimeOfDay('day');
+
   function syncTrackUI() {
     $('lfVal').textContent = env.trackDef.lanesF;
     $('loVal').textContent = env.trackDef.lanesO;
@@ -2466,7 +4371,12 @@ function initUI(env) {
   $('loMinus').onclick = () => { env.trackDef.lanesO = Math.max(0, env.trackDef.lanesO - 1); syncTrackUI(); env.api.rebuild(); };
   $('loPlus').onclick = () => { env.trackDef.lanesO = Math.min(3, env.trackDef.lanesO + 1); syncTrackUI(); env.api.rebuild(); };
   $('barrierSel').onchange = () => { env.trackDef.barrier = $('barrierSel').value; env.api.rebuild(); };
-  $('fogRange').oninput = () => env.api.setFog(+$('fogRange').value);
+  $('fogRange').oninput = () => {
+    const val = +$('fogRange').value;
+    if (env.api.setFog) env.api.setFog(val);
+    else if (env.api.setFogDensity) env.api.setFogDensity(val);
+    else if (env.fog) env.fog.density = val;
+  };
   $('btnEdit').onclick = () => env.api.toggleEditor();
   $('btnDefault').onclick = () => env.api.restoreDefault();
   $('conToggle').onclick = () => {
@@ -2504,10 +4414,10 @@ function initUI(env) {
       rf.title = 'V2V radio (BSM transmitter)';
       rf.onclick = () => { ai.radio = !ai.radio; rf.classList.toggle('on', ai.radio); };
       const behSel = document.createElement('select');
-      [['cruise', 'CRUISE'], ['brake', 'BRAKE EVT'], ['stopped', 'STOPPED']].forEach(([val, lab]) => {
+      [['normal', 'NORMAL'], ['erratic', 'ERRATIC'], ['brake', 'BRAKE EVT'], ['stopped', 'STOPPED']].forEach(([val, lab]) => {
         const o = document.createElement('option'); o.value = val; o.textContent = lab; behSel.appendChild(o);
       });
-      behSel.value = ai.behavior;
+      behSel.value = ai.behavior || 'normal';
       behSel.onchange = () => { ai.behavior = behSel.value; if (ai.behavior === 'stopped') ai.v = 0; };
       const spd = document.createElement('input');
       spd.type = 'range'; spd.min = 0; spd.max = 120; spd.value = Math.round(ai.speed * 3.6);
@@ -2523,6 +4433,8 @@ function initUI(env) {
     });
   }
   $('addVeh').onclick = () => { env.api.addAI({}); renderVehicles(); toast('VEHICLE ADDED — DRAG ITS MARKER IN THE EDITOR'); };
+  $('btnDense').onclick = () => { populateDenseTraffic(); renderVehicles(); toast('DENSE TRAFFIC SPAWNED (18 VEHICLES)'); };
+  $('btnClearVeh').onclick = () => { clearScenario(); renderVehicles(); toast('ALL TRAFFIC CLEARED'); };
   $('btnReset').onclick = () => env.api.resetRun();
   $('crashReset').onclick = () => env.api.resetRun();
   $('btnSave').onclick = () => env.api.save();
@@ -2555,8 +4467,10 @@ const assets = createAssets(renderer);
 
 const skyGroup = new THREE.Group();
 scene.add(skyGroup);
+
+let skyMat, starPoints, moonSprite;
 {
-  const skyMat = new THREE.ShaderMaterial({
+  skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
       top: { value: new THREE.Color(0x060913) },
@@ -2597,16 +4511,21 @@ scene.add(skyGroup);
   const sg = new THREE.BufferGeometry();
   sg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   sg.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  skyGroup.add(new THREE.Points(sg, new THREE.PointsMaterial({
+  starPoints = new THREE.Points(sg, new THREE.PointsMaterial({
     map: assets.tex.star, vertexColors: true, size: 2.4, sizeAttenuation: false,
-    transparent: true, opacity: 0.85, depthWrite: false, fog: false, color: 0xdfe8ff })));
-  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: assets.tex.moon, fog: false, transparent: true, depthWrite: false }));
-  moon.scale.set(70, 70, 1);
-  moon.position.set(150, 285, -516);
-  skyGroup.add(moon);
+    transparent: true, opacity: 0.85, depthWrite: false, fog: false, color: 0xdfe8ff }));
+  skyGroup.add(starPoints);
+  moonSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: assets.tex.moon, fog: false, transparent: true, depthWrite: false }));
+  moonSprite.scale.set(70, 70, 1);
+  moonSprite.position.set(150, 285, -516);
+  skyGroup.add(moonSprite);
 }
-scene.add(new THREE.AmbientLight(0x1a2238, 0.6));
-scene.add(new THREE.HemisphereLight(0x131c32, 0x04060a, 0.3));
+
+const ambientLight = new THREE.AmbientLight(0x1a2238, 0.6);
+scene.add(ambientLight);
+const hemiLight = new THREE.HemisphereLight(0x131c32, 0x04060a, 0.3);
+scene.add(hemiLight);
+
 const moonDir = new THREE.Vector3(150, 285, -516).normalize();
 const moonLight = new THREE.DirectionalLight(0x7f9cf5, 0.8);
 moonLight.castShadow = true;
@@ -2616,6 +4535,142 @@ moonLight.shadow.camera.updateProjectionMatrix();
 moonLight.shadow.bias = -0.0004;
 moonLight.shadow.normalBias = 0.6;
 scene.add(moonLight, moonLight.target);
+
+let currentTimeOfDay = 'night';
+const TIME_OF_DAY_PRESETS = {
+  night: {
+    top: 0x03060f,
+    horizon: 0x0c1322,
+    dusk: 0x22142d,
+    duskDir: [-0.55, -0.75],
+    fogColor: 0x0c1322,
+    clearColor: 0x03060f,
+    fogDensity: 0.015,
+    ambientColor: 0x141d2e,
+    ambientIntensity: 0.55,
+    hemiSky: 0x162134,
+    hemiGround: 0x05070c,
+    hemiIntensity: 0.35,
+    mainColor: 0x7f9cf5,
+    mainIntensity: 0.85,
+    mainDir: [150, 285, -516],
+    starsOpacity: 0.85,
+    moonOpacity: 1.0,
+    buildingEmissive: 1.0,
+    streetLampIntensity: 1.0,
+    headlights: true
+  },
+  dawn: {
+    top: 0x16233b,
+    horizon: 0xd96b27,
+    dusk: 0xf57c00,
+    duskDir: [-0.85, -0.45],
+    fogColor: 0xd96b27,
+    clearColor: 0x16233b,
+    fogDensity: 0.0055,
+    ambientColor: 0x5a3e35,
+    ambientIntensity: 0.85,
+    hemiSky: 0x6e4840,
+    hemiGround: 0x1e1514,
+    hemiIntensity: 0.6,
+    mainColor: 0xffa858,
+    mainIntensity: 1.8,
+    mainDir: [260, 80, -420],
+    starsOpacity: 0.10,
+    moonOpacity: 0.20,
+    buildingEmissive: 0.45,
+    streetLampIntensity: 0.4,
+    headlights: true
+  },
+  day: {
+    top: 0x2474bc,
+    horizon: 0xa0d0ea,
+    dusk: 0xeaf6ff,
+    duskDir: [-0.20, -0.90],
+    fogColor: 0xa0d0ea,
+    clearColor: 0xa0d0ea,
+    fogDensity: 0.0035,
+    ambientColor: 0x8898a8,
+    ambientIntensity: 1.2,
+    hemiSky: 0xc8e4f8,
+    hemiGround: 0x3a4832,
+    hemiIntensity: 0.85,
+    mainColor: 0xfffaf0,
+    mainIntensity: 2.5,
+    mainDir: [120, 380, -200],
+    starsOpacity: 0.0,
+    moonOpacity: 0.0,
+    buildingEmissive: 0.08,
+    streetLampIntensity: 0.0,
+    headlights: false
+  }
+};
+
+function setTimeOfDay(tod) {
+  const p = TIME_OF_DAY_PRESETS[tod] || TIME_OF_DAY_PRESETS.night;
+  currentTimeOfDay = tod;
+
+  if (skyMat && skyMat.uniforms) {
+    skyMat.uniforms.top.value.setHex(p.top);
+    skyMat.uniforms.horizon.value.setHex(p.horizon);
+    skyMat.uniforms.dusk.value.setHex(p.dusk);
+    skyMat.uniforms.duskDir.value.set(p.duskDir[0], p.duskDir[1]).normalize();
+  }
+  if (starPoints && starPoints.material) {
+    starPoints.material.opacity = p.starsOpacity;
+    starPoints.visible = p.starsOpacity > 0.01;
+  }
+  if (moonSprite && moonSprite.material) {
+    moonSprite.material.opacity = p.moonOpacity;
+    moonSprite.visible = p.moonOpacity > 0.01;
+  }
+  if (fog) {
+    fog.color.setHex(p.fogColor);
+    fog.density = p.fogDensity;
+  }
+  const fogInput = document.getElementById('fogRange');
+  if (fogInput && fog) {
+    fogInput.value = fog.density;
+  }
+  if (renderer) renderer.setClearColor(p.clearColor, 1);
+  if (ambientLight) {
+    ambientLight.color.setHex(p.ambientColor);
+    ambientLight.intensity = p.ambientIntensity;
+  }
+  if (hemiLight) {
+    hemiLight.color.setHex(p.hemiSky);
+    hemiLight.groundColor.setHex(p.hemiGround);
+    hemiLight.intensity = p.hemiIntensity;
+  }
+  if (moonLight) {
+    moonLight.color.setHex(p.mainColor);
+    moonLight.intensity = p.mainIntensity;
+    moonDir.set(p.mainDir[0], p.mainDir[1], p.mainDir[2]).normalize();
+  }
+
+  // Update building materials emissive intensity
+  if (T && T.disposeMats) {
+    T.disposeMats.forEach(m => {
+      if (m.emissiveMap && m.roughness === 0.9) {
+        m.emissiveIntensity = p.buildingEmissive;
+      }
+    });
+  }
+
+  // Update street lamp bulbs
+  if (assets && assets.mat && assets.mat.bulb) {
+    assets.mat.bulb.emissiveIntensity = p.streetLampIntensity * 3.2;
+  }
+
+  // Update button active state
+  ['todNight', 'todDawn', 'todDay'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('on', id.toLowerCase().includes(tod));
+  });
+
+  if (p.headlights !== undefined) setHeadlights(p.headlights);
+  toast(`ENVIRONMENT: ${tod.toUpperCase()} LIGHTING`);
+}
 
 const fpsCam = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 1000);
 const minimapCam = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 500);
@@ -2633,7 +4688,7 @@ const trackDef = {
 };
 const adas = createADAS();
 const aids = { on: true };
-let mode = 'manual';
+let mode = 'perception';
 const player = { spawnU: 0.08, cruise: 13.9, hint: 0 };
 const dyn = new VehicleDynamics();
 const scenario = [];
@@ -2644,9 +4699,12 @@ const lampSpots = makeLampSpots(scene);
 const ego = createEgo(assets);
 scene.add(ego.car);
 ego.car.add(fpsCam);
-fpsCam.position.set(0, 0.62, -2.52);         // BUMPER CAM — grille height, ahead of the body
+fpsCam.position.set(-0.33, 1.15, 0.15);         // COCKPIT VIEW — behind steering wheel in driver seat
 ego.car.add(SENS.camCam);                    // bumper-mounted sensor camera
 SENS.camCam.position.set(0, 0.6, -2.5);
+sensorVis = makeSensorVisualizer();
+ego.car.add(sensorVis.group);
+laneGuide = makeLaneGuideVisualizer(scene);
 
 const marks = new SkidMarks(scene);
 const smoke = new TyreSmoke(scene);
@@ -2695,11 +4753,80 @@ function clearScenario() { while (scenario.length) removeAI(scenario[scenario.le
 function defaultScenario() {
   clearScenario();
   const rel = m => (((player.spawnU + m / T.L) % 1 + 1) % 1);
-  addAI({ name: 'CAR A', hatch: true, paint: 0xe8631e, dir: 'fwd', lane: 0, spawnU: rel(30), speed: 14, behavior: 'brake', radio: true });
-  addAI({ name: 'CAR 2', dir: 'onc', lane: 0, spawnU: rel(180), speed: 15, behavior: 'cruise', radio: true });
-  addAI({ name: 'CAR 3', dir: 'onc', lane: 1, spawnU: rel(260), speed: 13, behavior: 'cruise', radio: true });
-  addAI({ name: 'HAZARD', hatch: true, paint: 0xc9ced4, dir: 'fwd', lane: 0, spawnU: rel(105), speed: 0, behavior: 'stopped', radio: false });
-  addAI({ name: 'CAR 5', dir: 'fwd', lane: 1, spawnU: rel(60), speed: 10.5, behavior: 'cruise', radio: true });
+  const oncAllowed = T.def.lanesO > 0;
+  const spacing = Math.max(40, T.L / 16); // Regular interval spacing
+
+  // Forward Lane 0 — cars at regular intervals across the entire circuit
+  for (let i = 0; i < 8; i++) {
+    const dist = 30 + i * spacing;
+    const radio = (i % 2 === 0);
+    const hatch = (i % 3 === 0);
+    const speed = 10.5 + (i % 4) * 1.2;
+    addAI({
+      name: `${radio ? 'V2V' : 'NOV2V'}-L0-${i + 1}`,
+      hatch, paint: PAINTS[i % PAINTS.length], dir: 'fwd', lane: 0,
+      spawnU: rel(dist), speed, behavior: (i === 4) ? 'erratic' : 'normal', radio
+    });
+  }
+
+  // Forward Lane 1 — cars at regular intervals offset from lane 0
+  for (let i = 0; i < 6; i++) {
+    const dist = 55 + i * spacing;
+    const radio = (i % 2 !== 0);
+    const hatch = (i % 3 === 1);
+    const speed = 11.0 + (i % 4) * 1.3;
+    addAI({
+      name: `${radio ? 'V2V' : 'NOV2V'}-L1-${i + 1}`,
+      hatch, paint: PAINTS[(i + 2) % PAINTS.length], dir: 'fwd', lane: 1,
+      spawnU: rel(dist), speed, behavior: 'normal', radio
+    });
+  }
+
+  // Oncoming Traffic at regular intervals
+  if (oncAllowed) {
+    for (let i = 0; i < 6; i++) {
+      const dist = 50 + i * spacing;
+      const lane = i % T.def.lanesO;
+      addAI({
+        name: `${(i % 2 === 0) ? 'V2V' : 'NOV2V'}-ONC-${i + 1}`,
+        hatch: (i % 3 === 0), dir: 'onc', lane,
+        spawnU: rel(dist), speed: 12.0 + (i % 3) * 1.5,
+        behavior: 'normal', radio: (i % 2 === 0)
+      });
+    }
+  }
+}
+
+function populateDenseTraffic() {
+  clearScenario();
+  const rel = m => (((player.spawnU + m / T.L) % 1 + 1) % 1);
+  const oncAllowed = T.def.lanesO > 0;
+  const numCars = 24;
+  const spacing = T.L / numCars;
+
+  for (let i = 0; i < numCars; i++) {
+    const isFwd = (!oncAllowed) || (i % 3 !== 2);
+    const dir = isFwd ? 'fwd' : 'onc';
+    const numLanes = dir === 'fwd' ? T.def.lanesF : T.def.lanesO;
+    const lane = i % numLanes;
+    const dist = (i + 0.5) * spacing + (Math.random() - 0.5) * 10;
+    const speed = 9.0 + (i % 5) * 1.2; // 32 to 50 km/h
+    const radio = (i % 2 === 0);
+    const hatch = (i % 3 === 0);
+    const behavior = (i % 7 === 6) ? 'erratic' : 'normal';
+
+    addAI({
+      name: `${radio ? 'V2V' : 'NOV2V'}-${dir.toUpperCase()}-${i + 1}`,
+      hatch,
+      paint: PAINTS[i % PAINTS.length],
+      dir,
+      lane,
+      spawnU: rel(dist),
+      speed,
+      behavior,
+      radio
+    });
+  }
 }
 function setAIBrake(ai, on) {
   ai.tailM.emissiveIntensity = on ? 5 : 1.1;
@@ -2776,7 +4903,7 @@ function resetRun() {
     placeAI(ai);
   });
   for (const cc of crossCars) { cc.q = -cc.sign * 125; cc.v = 0; placeCross(cc); }
-  toast('RUN RESET');
+  if (mode !== 'rl_train') toast('RUN RESET');
 }
 function restoreDefault() {
   trackDef.points = DEFAULT_POINTS.map(p => p.slice());
@@ -2805,6 +4932,7 @@ addEventListener('keydown', e => {
   if (editor.isOpen()) return;
   switch (e.code) {
     case 'KeyR': resetRun(); break;
+    case 'KeyC': togglePOV(); break;
     case 'KeyV': setMode(mode === 'manual' ? 'v2v' : 'manual'); break;
     case 'KeyA': if (mode === 'v2v') alcRequest(-1); break;
     case 'KeyD': if (mode === 'v2v') alcRequest(1); break;
@@ -2813,6 +4941,8 @@ addEventListener('keydown', e => {
       toast('HAZARD EVENT — FORWARD VEHICLES BRAKING');
       break;
     case 'KeyH': setHeadlights(!headlightsOn); break;
+    case 'KeyM': toggle3DMinimap(); break;
+    case 'KeyT': toggleTacticalRadar(); break;
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
@@ -2827,8 +4957,18 @@ function setMode(m) {
   resetALC();
   manSteer.v = 0;
   if (m === 'v2v' && Math.abs(dyn.u) > 2) player.cruise = Math.abs(dyn.u);
+  if (m === 'perception' || m === 'debug') SENS.on = true;
   updateModeUI();
-  toast(m === 'manual' ? 'MANUAL MODE' : 'V2V ASSIST ENGAGED');
+  const toastMsgs = {
+    driving: 'DRIVING MODE · WASD ACTIVE',
+    manual: 'DRIVING MODE · WASD ACTIVE',
+    perception: 'PERCEPTION SUITE ENGAGED',
+    v2v: 'V2V AUTONOMOUS ASSIST ENGAGED',
+    debug: 'DEBUG TELEMETRY ACTIVE',
+    rl_train: 'RL TRAINING MODE',
+    rl_eval: 'RL EVALUATION MODE'
+  };
+  toast(toastMsgs[m] || `${m.toUpperCase()} MODE`);
 }
 function setHeadlights(on) {
   headlightsOn = on;
@@ -2869,7 +5009,7 @@ function loadScenario() {
   rebuild();
   clearScenario();
   (data.vehicles || []).forEach(v => addAI(v));
-  mode = data.mode === 'v2v' ? 'v2v' : 'manual';
+  mode = data.mode === 'v2v' ? 'v2v' : 'driving';
   resetRun();
   renderVehicles();
   syncTrackUI();
@@ -2884,13 +5024,16 @@ const editor = initEditor({
 });
 const { toast, renderVehicles, syncTrackUI, updateModeUI } = initUI({
   getMode: () => mode, aids, adas, trackDef, scenario, player, fog,
-  api: {
-    setMode, rebuild, resetRun, restoreDefault,
-    addAI, removeAI, placeAI,
-    save: saveScenario, load: loadScenario,
-    setFog: setFogDensity,
-    toggleEditor: () => editor.isOpen() ? editor.close() : editor.open()
-  }
+  getTrack: () => T,
+  getDyn: () => dyn,
+    api: {
+      setMode, rebuild, resetRun, restoreDefault,
+      addAI, removeAI, placeAI,
+      save: saveScenario, load: loadScenario,
+      setFogDensity, setFog: setFogDensity, setHeadlights,
+      setTimeOfDay,
+      toggleEditor: () => { editor.isOpen() ? editor.close() : editor.open(); }
+    }
 });
 makePolicyApi();
 
@@ -2898,8 +5041,8 @@ makePolicyApi();
 function updatePlayer(dt) {
   const proj = T.project(dyn.x, dyn.z, player.hint);
   player.hint = proj.idx;
-  let onP = Math.abs(proj.lat) < T.metrics.pavedHalf + 0.35;
-  if (!onP) {
+  let onP = Math.abs(proj.lat) < (T.metrics ? T.metrics.pavedHalf : 10) + 0.35;
+  if (!onP && T.crossFrames) {
     for (const cf of T.crossFrames) {
       const dx = dyn.x - cf.cx, dz = dyn.z - cf.cz;
       const dT = Math.abs(dx * cf.tx + dz * cf.tz);
@@ -2910,29 +5053,69 @@ function updatePlayer(dt) {
   onPavement = onP;
   const mu = onP ? 0.92 : 0.5;
   let ctrl;
-  if (mode === 'manual') {
+  if (mode === 'driving' || mode === 'manual' || mode === 'perception' || mode === 'debug') {
     let throttle = keys.KeyW || keys.ArrowUp ? 1 : 0;
     let brake = keys.KeyS || keys.ArrowDown ? 1 : 0;
     if (dyn.u < 0.4 && brake && !throttle) { throttle = -0.4; brake = 0; }
-    /* ANALOGUE steering: ramped attack (speed-scaled) + release */
+    
+    /* Responsive & Easy Steering Controls */
     const input = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    const attack = 2.8 / (1 + Math.abs(dyn.u) / 22);
-    const release = 4.6;
-    if (input !== 0) manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
-    else manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
+    const speed = Math.abs(dyn.u);
+    const attack = 4.2 / (1 + speed / 32);
+    const release = 8.2;
+    
+    if (input !== 0) {
+      manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
+    } else {
+      manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
+      // Gentle auto-centering when driver releases keys (helps stay in lane effortlessly)
+      if (aids.on && speed > 2.0 && onP) {
+        const curLane = nearestLaneIdx(T, proj.lat);
+        const latTarget = T.laneLat ? T.laneLat('fwd', curLane) : 0;
+        const latErr = proj.lat - latTarget;
+        const headingErr = wrapAngle(dyn.psi - proj.psi);
+        const kLat = 0.22 / Math.max(1.0, speed * 0.08);
+        const kHead = 0.48;
+        const kCurv = (proj.kappa || 0) * (2.8 + speed * 0.14);
+        const assistSteer = clamp(kLat * latErr - kHead * headingErr + kCurv, -0.35, 0.35);
+        manSteer.v = clamp(assistSteer, -0.35, 0.35);
+      }
+    }
+    
+    // Safety Proximity Shield: gentle brake assist if about to hit wall/car
+    const prox = SENS.proximity;
+    if (aids.on && prox && prox.fwd < 5.0 && speed > 2.0) {
+      brake = Math.max(brake, 0.95);
+      throttle = 0.0;
+    }
     ctrl = { steer: manSteer.v, throttle, brake };
-    assist = null;
-  } else {
+    assist = computePolicy(dt, proj, clock.elapsedTime);
+  } else if (mode === 'v2v') {
     if (keys.KeyW || keys.ArrowUp) player.cruise = Math.min(player.cruise + 8 * dt, 44);
     if (keys.KeyS || keys.ArrowDown) player.cruise = Math.max(player.cruise - 12 * dt, 0);
-    if (userPolicy && policyApiObj) {
-      const r = userPolicy(getSensorFrame(), policyApiObj) || {};
-      ctrl = { steer: clamp(+r.steer || 0, -1, 1), throttle: clamp(+r.throttle || 0, 0, 1), brake: clamp(+r.brake || 0, 0, 1) };
-      assist = null;
+
+    const input = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    const speed = Math.abs(dyn.u);
+    const attack = 4.2 / (1 + speed / 32);
+    const release = 8.2;
+    if (input !== 0) {
+      manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
     } else {
-      assist = computePolicy(dt, proj);
-      ctrl = { steer: assist.steer, throttle: assist.throttle, brake: assist.brake };
+      manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
     }
+
+    assist = computePolicy(dt, proj, clock.elapsedTime);
+    ctrl = { steer: assist.steer, throttle: assist.throttle, brake: assist.brake };
+  } else if (userPolicy && policyApiObj) {
+    const r = userPolicy(getSensorFrame(), policyApiObj) || {};
+    ctrl = { steer: clamp(+r.steer || 0, -1, 1), throttle: clamp(+r.throttle || 0, 0, 1), brake: clamp(+r.brake || 0, 0, 1) };
+    assist = null;
+  } else if (mode === 'rl_train' || mode === 'rl_eval') {
+    ctrl = (rlEnv && rlEnv.lastCtrl) ? rlEnv.lastCtrl : { steer: 0, throttle: 0, brake: 0 };
+    assist = null;
+  } else {
+    assist = computePolicy(dt, proj, clock.elapsedTime);
+    ctrl = { steer: assist.steer, throttle: assist.throttle, brake: assist.brake };
   }
   const env = { mu, offroad: !onP, abs: mode === 'v2v' ? true : aids.on, esc: mode === 'v2v' ? true : aids.on };
 
@@ -2940,39 +5123,121 @@ function updatePlayer(dt) {
   let steps = 0;
   while (acc >= PHYS_H && steps++ < 6) { dyn.step(PHYS_H, ctrl, env); acc -= PHYS_H; }
 
-  /* ---- rail/wall boundary: impulse + slide, never a teleport trap ---- */
+  /* ---- rail/wall boundary: 4-corner rigid body impulse + slide with steering freedom ---- */
   const p2 = T.project(dyn.x, dyn.z, player.hint);
-  let lim = T.metrics.deckHalf - 0.9;
-  if (T.bar && T.inWin(p2.s) && Math.sign(p2.lat) === T.bar.side) lim = T.metrics.deckHalf - 1.05;
   let nearCross = false;
-  for (const cf of T.crossFrames)
+  for (const cf of T.crossFrames) {
     if (Math.abs(T.wrapS(p2.s - cf.s)) < T.metrics.deckHalf + 3) { nearCross = true; break; }
-  if (nearCross) lim = 1e9;
-  const pen = Math.abs(p2.lat) - lim;
-  if (pen > 0) {
-    const sg = Math.sign(p2.lat);
-    dyn.x = p2.fx + p2.rx * sg * lim;
-    dyn.z = p2.fz + p2.rz * sg * lim;
+  }
+
+  if (!nearCross) {
+    const barActive = T.bar && T.inWin(p2.s);
+    const limR = (barActive && T.bar.side === 1) ? (T.metrics.deckHalf - 0.08) : (T.metrics.deckHalf + 0.02);
+    const limL = (barActive && T.bar.side === -1) ? -(T.metrics.deckHalf - 0.08) : -(T.metrics.deckHalf + 0.02);
+
+    const hl = 2.30, hw = 0.90;
     const f = dyn.forward(), r = dyn.right();
-    let vx = dyn.u * f.x + dyn.w * r.x, vz = dyn.u * f.z + dyn.w * r.z;
-    const nx = -p2.rx * sg, nz = -p2.rz * sg;
-    const vn = vx * nx + vz * nz;
-    if (vn < -3.5) {
-      vx -= 1.3 * vn * nx; vz -= 1.3 * vn * nz;
-      vx *= 0.8; vz *= 0.8;
-      shakeT = Math.max(shakeT, 0.8);
-      if (railToastT <= 0) { railToastT = 2.5; toast('GUARDRAIL IMPACT'); }
-    } else if (vn < 0) {
-      vx -= vn * nx; vz -= vn * nz;
-      vx *= 0.985; vz *= 0.985;
+    const corners = [
+      [hw, hl],   // FR
+      [-hw, hl],  // FL
+      [hw, -hl],  // RR
+      [-hw, -hl]  // RL
+    ];
+
+    let penR_max = 0, penL_max = 0;
+    let deepR_lx = 0, deepR_lz = 0, deepL_lx = 0, deepL_lz = 0;
+    let penR_front = -999, penR_rear = -999;
+    let penL_front = -999, penL_rear = -999;
+
+    for (let i = 0; i < 4; i++) {
+      const [lx, lz] = corners[i];
+      const ax = lx * r.x + lz * f.x;
+      const az = lx * r.z + lz * f.z;
+      const cornerLat = p2.lat + (ax * p2.rx + az * p2.rz);
+
+      const pR = cornerLat - limR;
+      const pL = limL - cornerLat;
+
+      if (pR > penR_max) { penR_max = pR; deepR_lx = lx; deepR_lz = lz; }
+      if (pL > penL_max) { penL_max = pL; deepL_lx = lx; deepL_lz = lz; }
+
+      if (lz > 0) {
+        if (pR > penR_front) penR_front = pR;
+        if (pL > penL_front) penL_front = pL;
+      } else {
+        if (pR > penR_rear) penR_rear = pR;
+        if (pL > penL_rear) penL_rear = pL;
+      }
     }
-    const psiDes = Math.atan2(-p2.rz, p2.rx);
-    const slow = Math.abs(dyn.u) < 2.5;
-    dyn.psi += wrapAngle(psiDes - dyn.psi) * Math.min(1, dt * (slow ? 9 : 4.5));
-    dyn.om *= 0.6;
-    const f2 = dyn.forward(), r2 = dyn.right();
-    dyn.u = vx * f2.x + vz * f2.z;
-    dyn.w = vx * r2.x + vz * r2.z;
+
+    const pen = Math.max(penR_max, penL_max);
+    if (pen > 0) {
+      const sg = penR_max > penL_max ? 1 : -1;
+      const deep_lx = sg === 1 ? deepR_lx : deepL_lx;
+      const deep_lz = sg === 1 ? deepR_lz : deepL_lz;
+      const pen_front = sg === 1 ? penR_front : penL_front;
+      const nx = -p2.rx * sg, nz = -p2.rz * sg;
+
+      // 1. Position correction: push out of wall so deepest corner is on barrier boundary
+      dyn.x += nx * pen;
+      dyn.z += nz * pen;
+
+      // 2. Linear velocity & contact impulse
+      let vx = dyn.u * f.x + dyn.w * r.x;
+      let vz = dyn.u * f.z + dyn.w * r.z;
+
+      const vn = vx * nx + vz * nz;
+      if (vn < 0) {
+        const hard = vn < -3.0;
+        if (hard) {
+          shakeT = Math.max(shakeT, 0.8);
+          if (railToastT <= 0) { railToastT = 2.0; toast('GUARDRAIL IMPACT'); }
+        }
+        const restit = hard ? 0.18 : 0.0;
+        vx -= (1.0 + restit) * vn * nx;
+        vz -= (1.0 + restit) * vn * nz;
+        vx *= 0.985;
+        vz *= 0.985;
+        dyn.w *= 0.3;
+      }
+
+      // 3. Restoring angular impulse on front impact (deflects nose naturally away from wall)
+      if (deep_lz > 0) {
+        const tax = deep_lx * f.x - deep_lz * r.x;
+        const taz = deep_lx * f.z - deep_lz * r.z;
+        const tau = nx * tax + nz * taz;
+        const vcn = vn + dyn.om * tau;
+        if (vcn < 0) {
+          const impulseMag = -vcn;
+          const mEff = 1.0 / (1.0 / dyn.m + (tau * tau) / dyn.Iz);
+          const Jn = impulseMag * mEff;
+          dyn.om += (tau * Jn) / dyn.Iz;
+        }
+      }
+
+      // 4. Boundary heading limit only when forcing steering deep into the wall
+      // When steering away (or parallel), no constraint is applied — player has full steering control
+      const psiRoad = Math.atan2(-p2.rz, p2.rx);
+      const psiRel = wrapAngle(dyn.psi - psiRoad);
+      if (sg === -1) {
+        // Left barrier: nose pointing left (psiRel > 0.22 rad / ~12.6 deg) is penetrating into wall
+        if (pen_front > 0.005 && psiRel > 0.22) {
+          dyn.psi -= (psiRel - 0.22) * Math.min(1.0, dt * 10.0);
+          if (dyn.om > 0) dyn.om = Math.min(0, -dyn.om * 0.2);
+        }
+      } else {
+        // Right barrier: nose pointing right (psiRel < -0.22 rad) is penetrating into wall
+        if (pen_front > 0.005 && psiRel < -0.22) {
+          dyn.psi -= (psiRel + 0.22) * Math.min(1.0, dt * 10.0);
+          if (dyn.om < 0) dyn.om = Math.max(0, -dyn.om * 0.2);
+        }
+      }
+
+      // Reconstruct longitudinal (u) and lateral (w) vehicle speeds
+      const f2 = dyn.forward(), r2 = dyn.right();
+      dyn.u = vx * f2.x + vz * f2.z;
+      dyn.w = vx * r2.x + vz * r2.z;
+    }
   }
 
   ego.car.position.set(dyn.x, 0, dyn.z);
@@ -3010,7 +5275,7 @@ function updateAI(dt, egoS, egoLat, et) {
       }
       if (has) want = Math.min(want, Math.max(0, lv + 0.5 * (g - (7 + ai.v * 1.2))));
       const gp = T.wrapS(egoS - ai.s);
-      if (gp > 0.5 && gp < 25 && Math.abs(T.laneLat('fwd', ai.lane) - egoLat) < 2.4)
+      if (ai.behavior !== 'erratic' && gp > 0.5 && gp < 25 && Math.abs(T.laneLat('fwd', ai.lane) - egoLat) < 2.4)
         want = Math.min(want, Math.max(0, Math.abs(dyn.u) + 0.5 * (gp - (7 + ai.v * 1.2))));
       for (const ob of T.obstacleData) {
         if (Math.abs(ob.lat - T.laneLat('fwd', ai.lane)) > 2.2) continue;
@@ -3138,21 +5403,21 @@ function drawUltra() {
   ctx.beginPath(); ctx.arc(cx, cy, 22, 0, 7); ctx.stroke();
   ctx.fillStyle = '#45e6ff';
   ctx.fillRect(cx - 4, cy - 9, 8, 18);
-  let minD = 7, minK = -1;
+  let minD = SENS.ultra.far, minK = -1;
   for (let k = 0; k < ULTRA_DIRS.length; k++) {
     const a = ULTRA_DIRS[k];
     const ux = Math.sin(a), uy = -Math.cos(a);
     const d = SENS.ultra.dist[k];
     if (d < minD) { minD = d; minK = k; }
-    const len = (1 - d / 7) * 36;
-    const col = d < 2.2 ? '#ff5340' : d < 4.2 ? '#ffb454' : 'rgba(69,230,255,0.75)';
+    const len = (1 - clamp(d / SENS.ultra.far, 0, 1)) * 36;
+    const col = d < 5 ? '#ff5340' : d < 12 ? '#ffb454' : 'rgba(69,230,255,0.75)';
     ctx.strokeStyle = col;
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2.0;
     ctx.beginPath();
     ctx.moveTo(cx + ux * 10, cy + uy * 12);
     ctx.lineTo(cx + ux * (10 + len), cy + uy * (12 + len));
     ctx.stroke();
-    if (d < 6.9) {
+    if (d < SENS.ultra.far - 0.5) {
       ctx.fillStyle = col;
       ctx.beginPath();
       ctx.arc(cx + ux * (10 + len), cy + uy * (12 + len), 2.2, 0, 7);
@@ -3161,8 +5426,8 @@ function drawUltra() {
   }
   ctx.fillStyle = 'rgba(150,178,204,0.75)';
   ctx.font = '9px IBM Plex Mono';
-  ctx.fillText(`ULTRA · ${ULTRA_DIRS.length} CH · MIN ${minD.toFixed(1)} M`, 8, 12);
-  if (minK >= 0 && SENS.ultra.dist[minK] < 6.9)
+  ctx.fillText(`PROXIMITY 360° · ${ULTRA_DIRS.length} CH · MIN ${minD.toFixed(1)} M`, 8, 12);
+  if (minK >= 0 && SENS.ultra.dist[minK] < SENS.ultra.far - 0.5)
     ctx.fillText(`${ULTRA_LABELS[minK]} ${SENS.ultra.types[minK].toUpperCase()}`, 8, 108);
 }
 function updateSensorCard() {
@@ -3193,45 +5458,338 @@ const tele = document.getElementById('tele');
 const mapTick = document.getElementById('mapTick');
 const alertEl = document.getElementById('alert');
 let alertTxt = '';
+
 function updateHUD(proj) {
   const spd = Math.round(Math.abs(dyn.u) * 3.6);
+  const t = telemetryState;
+  
   let txt = (mode === 'v2v'
-    ? `V2V LINK · ${SENS.bsm.length} BSM`
+    ? `V2V ASSIST · RISK ${t.riskLevel}`
     : aids.on ? 'MANUAL · AIDS ON' : 'MANUAL · FULLY RAW') +
     ` · ${String(spd).padStart(3, '0')} KM/H · ${Math.abs(dyn.ay / GRAV).toFixed(1)} G`;
+
   let warn = false;
-  let best = null, bg = 1e9;
-  for (const p of SENS.perceived) {
-    if (p.v < -0.5) continue;
-    const g = T.wrapS(p.s - proj.s);
-    if (g <= 0 || g > 250) continue;
-    if (Math.abs(p.lat - proj.lat) > 4.5) continue;
-    if (g < bg) { bg = g; best = p; }
+  if (t.highestRiskThreat) {
+    const threat = t.highestRiskThreat;
+    const ttcStr = Number.isFinite(threat.ttc) ? `${threat.ttc.toFixed(1)}S` : 'SAFE';
+    const idStr = threat.id !== -1 ? `ID:${threat.id}` : 'RAY_TRACK';
+    txt += ` · THREAT ${threat.source} [${idStr}] ${Math.round(threat.distance)}M · TTC ${ttcStr}`;
+    if (t.riskLevel === 'HIGH' || t.riskLevel === 'CRITICAL') warn = true;
   }
-  if (best) {
-    txt += ` · LEAD ${Math.round(bg)} M · ${best.seen ? 'VISUAL' : best.src === 'v2v' ? 'OCCLUDED — RADIO ONLY' : 'VISUAL'}`;
-    if (!best.seen) warn = true;
+
+  if (t.selectedAction && t.selectedAction !== 'NORMAL_DRIVING' && t.selectedAction !== 'CRUISE') {
+    txt += ` · ACT: ${t.selectedAction}`;
   }
-  if (assist && assist.alcActive) txt += ' · ALC';
+  if (t.lateralAuthority && t.lateralAuthority !== 'MANUAL') {
+    txt += ` · LAT: ${t.lateralAuthority}`;
+  }
+  if (t.longitudinalAuthority && t.longitudinalAuthority !== 'MANUAL') {
+    txt += ` · LONG: ${t.longitudinalAuthority}`;
+  }
+
   if (Math.abs(dyn.beta) > 0.12 && Math.abs(dyn.u) > 5) { txt += ` · SLIP ${Math.round(Math.abs(dyn.beta) * 57.3)}°`; warn = true; }
   if (!onPavement) { txt += ' · OFF PAVEMENT'; warn = true; }
-  tele.textContent = txt;
-  tele.classList.toggle('warn', warn);
+
+  if (tele) {
+    tele.textContent = txt;
+    tele.classList.toggle('warn', warn);
+  }
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(ego.car.quaternion);
-  mapTick.style.transform = `rotate(${(Math.atan2(fwd.x, -fwd.z) * 180 / Math.PI).toFixed(1)}deg)`;
+  if (mapTick) mapTick.style.transform = `rotate(${(Math.atan2(fwd.x, -fwd.z) * 180 / Math.PI).toFixed(1)}deg)`;
 }
+
 function updateAlertDOM() {
   let t = '', cls = '';
-  if (mode === 'v2v' && assist && assist.alert) { t = assist.alert; cls = assist.sev; }
-  else if (crashed) { t = 'COLLISION — R TO RESET'; cls = 'red'; }
-  else if (mode === 'manual' && !aids.on && dyn.lockF && Math.abs(dyn.u) > 4) { t = 'BRAKE LOCK — STEERING AUTHORITY LOST'; cls = 'red'; }
-  else if (mode === 'manual' && Math.abs(dyn.beta) > 0.18 && Math.abs(dyn.u) > 5) { t = 'SLIP — COUNTER-STEER & EASE OFF'; cls = 'amber'; }
-  else if (dyn.escActive) { t = 'ESC — STABILITY INTERVENTION'; cls = 'amber'; }
+  if (mode === 'v2v' && assist && assist.alert) {
+    t = assist.alert;
+    cls = assist.sev || 'amber';
+  } else if (crashed) {
+    t = 'COLLISION — R TO RESET';
+    cls = 'red';
+  } else if (mode === 'manual' && !aids.on && dyn.lockF && Math.abs(dyn.u) > 4) {
+    t = 'BRAKE LOCK — STEERING AUTHORITY LOST';
+    cls = 'red';
+  } else if (mode === 'manual' && Math.abs(dyn.beta) > 0.18 && Math.abs(dyn.u) > 5) {
+    t = 'SLIP — COUNTER-STEER & EASE OFF';
+    cls = 'amber';
+  } else if (dyn.escActive) {
+    t = 'ESC — STABILITY INTERVENTION';
+    cls = 'amber';
+  }
   if (t !== alertTxt) {
     alertTxt = t;
-    alertEl.textContent = t;
-    alertEl.className = t ? 'on ' + cls : '';
+    if (alertEl) {
+      alertEl.textContent = t;
+      alertEl.className = t ? 'on ' + cls : '';
+    }
   }
+}
+
+/* ---------- Separate 3D Map & V2V Tactical Radar (Phase 18 Modular) ---------- */
+let minimap3dOn = true;
+let tacticalRadarOn = true;
+
+const radarCanvas = document.getElementById('radarCanvas');
+const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
+const radarTooltip = document.getElementById('radarTooltip');
+const RADAR_RADIUS = 80;
+const RADAR_SIZE = 230;
+const RADAR_CENTER = 115;
+const RADAR_SCALE = RADAR_CENTER / RADAR_RADIUS; // 115 / 80 = 1.4375 px/m
+
+let hoveredRadarVehicle = null;
+
+if (radarCanvas) {
+  radarCanvas.addEventListener('mousemove', (e) => {
+    const rect = radarCanvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (radarCanvas.width / rect.width);
+    const my = (e.clientY - rect.top) * (radarCanvas.height / rect.height);
+
+    hoveredRadarVehicle = null;
+    const ego = dyn;
+    const egoPsi = ego.psi ?? 0;
+    const cosPsi = Math.cos(egoPsi);
+    const sinPsi = Math.sin(egoPsi);
+
+    for (const p of (SENS.perceived || [])) {
+      // Filter out non-vehicles (barrels, rails, obstacles)
+      const isVeh = (p.tag === 'vehicle' || p.tag === 'car' || p.src === 'v2v' || p.src === 'fused' || (p.tag && p.tag.includes('veh')));
+      if (!isVeh) continue;
+
+      const dx = (p.wx ?? p.x ?? 0) - ego.x;
+      const dz = (p.wz ?? p.z ?? 0) - ego.z;
+      const relX = dx * cosPsi - dz * sinPsi;
+      const relZ = -(dx * sinPsi + dz * cosPsi);
+
+      const dist = Math.hypot(relX, relZ);
+      if (dist > RADAR_RADIUS) continue;
+
+      const px = RADAR_CENTER + relX * RADAR_SCALE;
+      const py = RADAR_CENTER - relZ * RADAR_SCALE;
+
+      if (Math.hypot(mx - px, my - py) < 14) {
+        hoveredRadarVehicle = p;
+        break;
+      }
+    }
+
+    if (hoveredRadarVehicle && radarTooltip) {
+      const idText = (hoveredRadarVehicle.id !== -1 && hoveredRadarVehicle.id !== undefined && hoveredRadarVehicle.id !== null) ? `${hoveredRadarVehicle.id}` : 'LOCAL';
+      const srcText = (hoveredRadarVehicle.src || 'LOCAL').toUpperCase();
+      const distVal = hoveredRadarVehicle.distance !== undefined ? hoveredRadarVehicle.distance : Math.hypot((hoveredRadarVehicle.wx ?? 0) - ego.x, (hoveredRadarVehicle.wz ?? 0) - ego.z);
+      const relSpdVal = hoveredRadarVehicle.relativeSpeed !== undefined ? hoveredRadarVehicle.relativeSpeed : ((hoveredRadarVehicle.v ?? 0) - Math.abs(ego.u ?? 0));
+      const laneVal = hoveredRadarVehicle.lane !== undefined ? (hoveredRadarVehicle.lane + 1) : (T ? nearestLaneIdx(T, hoveredRadarVehicle.lat) + 1 : '—');
+      const ttcVal = Number.isFinite(hoveredRadarVehicle.ttc) ? `${hoveredRadarVehicle.ttc.toFixed(2)}s` : '∞';
+      const ageVal = (hoveredRadarVehicle.v2vAge ?? 0).toFixed(2);
+      const ttcColor = (hoveredRadarVehicle.ttc && hoveredRadarVehicle.ttc < 3.2) ? '#ff5340' : '#dff0ff';
+
+      radarTooltip.style.display = 'block';
+      radarTooltip.innerHTML = `
+        <div style="font-weight:700;color:#ffb454;margin-bottom:3px;border-bottom:1px solid rgba(0,229,255,0.3);padding-bottom:2px;">
+          ID: ${idText} · SOURCE: <span style="color:#00e5ff;">${srcText}</span>
+        </div>
+        <div>DIST: <b>${distVal.toFixed(1)}m</b> · REL SPD: <b>${relSpdVal.toFixed(1)}m/s</b></div>
+        <div>LANE: <b>${laneVal}</b> · TTC: <b style="color:${ttcColor};">${ttcVal}</b></div>
+        <div>V2V AGE: <b>${ageVal}s</b></div>
+      `;
+    } else if (radarTooltip) {
+      radarTooltip.style.display = 'none';
+    }
+  });
+
+  radarCanvas.addEventListener('mouseleave', () => {
+    hoveredRadarVehicle = null;
+    if (radarTooltip) radarTooltip.style.display = 'none';
+  });
+}
+
+function toggle3DMinimap(force) {
+  minimap3dOn = typeof force === 'boolean' ? force : !minimap3dOn;
+  const wrap = document.getElementById('mapWrap');
+  if (wrap) wrap.style.display = minimap3dOn ? 'block' : 'none';
+  const btn = document.getElementById('minimap3dTgl');
+  if (btn) {
+    btn.textContent = minimap3dOn ? 'ON' : 'OFF';
+    btn.classList.toggle('on', minimap3dOn);
+  }
+}
+
+function toggleTacticalRadar(force) {
+  tacticalRadarOn = typeof force === 'boolean' ? force : !tacticalRadarOn;
+  const wrap = document.getElementById('radarWrap');
+  if (wrap) wrap.style.display = tacticalRadarOn ? 'block' : 'none';
+  const btn = document.getElementById('radarTgl');
+  if (btn) {
+    btn.textContent = tacticalRadarOn ? 'ON' : 'OFF';
+    btn.classList.toggle('on', tacticalRadarOn);
+  }
+}
+
+if (document.getElementById('minimap3dTgl')) {
+  document.getElementById('minimap3dTgl').onclick = () => toggle3DMinimap();
+}
+if (document.getElementById('radarTgl')) {
+  document.getElementById('radarTgl').onclick = () => toggleTacticalRadar();
+}
+
+function drawTacticalRadar(et) {
+  if (!radarCtx || !tacticalRadarOn) return;
+  const ctx = radarCtx;
+  ctx.clearRect(0, 0, RADAR_SIZE, RADAR_SIZE);
+
+  const ego = dyn;
+  const egoPsi = ego.psi ?? 0;
+  const cosPsi = Math.cos(egoPsi);
+  const sinPsi = Math.sin(egoPsi);
+
+  // 1. Radar range rings (20m, 40m, 60m, 80m)
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.18)';
+  ctx.lineWidth = 1;
+  [20, 40, 60, 80].forEach(r => {
+    ctx.beginPath();
+    ctx.arc(RADAR_CENTER, RADAR_CENTER, r * RADAR_SCALE, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Range distance label along vertical axis
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.42)';
+    ctx.font = '7px monospace';
+    ctx.fillText(`${r}M`, RADAR_CENTER + 2, RADAR_CENTER - r * RADAR_SCALE + 8);
+  });
+
+  // Crosshairs
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.22)';
+  ctx.beginPath();
+  ctx.moveTo(RADAR_CENTER, 0); ctx.lineTo(RADAR_CENTER, RADAR_SIZE);
+  ctx.moveTo(0, RADAR_CENTER); ctx.lineTo(RADAR_SIZE, RADAR_CENTER);
+  ctx.stroke();
+
+  // 2. Render Highest Risk Threat Direction Vector (if active)
+  const perceived = SENS.perceived || [];
+  const highestThreat = telemetryState.highestRiskThreat;
+
+  if (highestThreat) {
+    const dxH = (highestThreat.wx ?? highestThreat.x ?? 0) - ego.x;
+    const dzH = (highestThreat.wz ?? highestThreat.z ?? 0) - ego.z;
+    const relXH = dxH * cosPsi - dzH * sinPsi;
+    const relZH = -(dxH * sinPsi + dzH * cosPsi);
+    const distH = Math.hypot(relXH, relZH);
+
+    if (distH <= RADAR_RADIUS) {
+      const pxH = RADAR_CENTER + relXH * RADAR_SCALE;
+      const pyH = RADAR_CENTER - relZH * RADAR_SCALE;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 75, 60, 0.50)';
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(RADAR_CENTER, RADAR_CENTER);
+      ctx.lineTo(pxH, pyH);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 3. Render Perceived Vehicles
+  for (const p of perceived) {
+    // Filter out non-vehicles (barrels, barriers, rails, scenery)
+    const isVeh = (p.tag === 'vehicle' || p.tag === 'car' || p.src === 'v2v' || p.src === 'fused' || (p.tag && p.tag.includes('veh')));
+    if (!isVeh) continue;
+
+    const dx = (p.wx ?? p.x ?? 0) - ego.x;
+    const dz = (p.wz ?? p.z ?? 0) - ego.z;
+    const relX = dx * cosPsi - dz * sinPsi;
+    const relZ = -(dx * sinPsi + dz * cosPsi);
+
+    const dist = Math.hypot(relX, relZ);
+    if (dist > RADAR_RADIUS) continue;
+
+    const px = RADAR_CENTER + relX * RADAR_SCALE;
+    const py = RADAR_CENTER - relZ * RADAR_SCALE;
+    const src = (p.src || 'local').toLowerCase();
+
+    ctx.save();
+    ctx.translate(px, py);
+
+    // Marker styling based strictly on source shapes:
+    if (src === 'fused') {
+      // FUSED: Unmistakable Emerald Diamond (◇)
+      ctx.fillStyle = 'rgba(42, 245, 152, 0.55)';
+      ctx.strokeStyle = '#2af598';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(0, -7.5);
+      ctx.lineTo(6.5, 0);
+      ctx.lineTo(0, 7.5);
+      ctx.lineTo(-6.5, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (src === 'v2v') {
+      // V2V ONLY: Unmistakable Orange Circle (○)
+      ctx.fillStyle = 'rgba(255, 154, 74, 0.45)';
+      ctx.strokeStyle = '#ff9a4a';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      // LOCAL ONLY: Unmistakable Cyan Square (□)
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.40)';
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 1.8;
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.strokeRect(-5, -5, 10, 10);
+    }
+
+    // Highlight controller's authoritative highestRiskThreat with animated pulsing reticle
+    const isHighest = highestThreat && (
+      (p.id !== -1 && p.id === highestThreat.id) ||
+      p === highestThreat ||
+      Math.hypot((p.wx ?? 0) - (highestThreat.wx ?? 0), (p.wz ?? 0) - (highestThreat.wz ?? 0)) < 2.0
+    );
+
+    if (isHighest) {
+      const pulse = 10 + Math.sin(et * 9) * 3.5;
+      ctx.strokeStyle = '#ff4340';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.arc(0, 0, pulse, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Threat TTC Badge
+      if (Number.isFinite(p.ttc) && p.ttc < 8) {
+        ctx.fillStyle = '#ff4340';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(`${p.ttc.toFixed(1)}s`, 9, -7);
+      }
+    }
+
+    // Stable ID Label (V2V ID for V2V/Fused, 'LOC' for Local-only)
+    const lbl = (p.id !== -1 && p.id !== undefined && p.id !== null) ? `${p.id}` : 'LOC';
+    ctx.fillStyle = '#dff0ff';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(lbl, 8, 3);
+
+    ctx.restore();
+  }
+
+  // 4. Ego Vehicle Marker (Centered, Directional Triangle pointing UP ▲)
+  ctx.save();
+  ctx.translate(RADAR_CENTER, RADAR_CENTER);
+  ctx.fillStyle = '#ffb454';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(7, 8);
+  ctx.lineTo(0, 5);
+  ctx.lineTo(-7, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* ---------- sensor frame for external algorithms ---------- */
@@ -3259,22 +5817,44 @@ function getSensorFrame() {
   };
 }
 
-/* ---------- camera: bumper view with lean + shake ---------- */
+let currentPOV = 'chase'; // 'chase' (elevated 3rd person) or 'cockpit' (1st person)
+function togglePOV() {
+  currentPOV = currentPOV === 'chase' ? 'cockpit' : 'chase';
+  const btn = document.getElementById('povTgl');
+  if (btn) btn.textContent = currentPOV.toUpperCase();
+  toast(currentPOV === 'chase' ? 'POV: THIRD-PERSON CHASE CAM' : 'POV: FIRST-PERSON COCKPIT CAM');
+}
+
+/* ---------- camera: dual POV (chase & cockpit) with lean + shake ---------- */
 function updateCamera(dt, et) {
   const driving = keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD ||
     keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight;
-  const k = 1 - Math.exp(-dt * 3.2);
-  yaw += ((driving && mode === 'manual' ? 0 : -mx * 0.5) - yaw) * k;
-  pitch += ((-0.03 - (driving && mode === 'manual' ? 0 : my * 0.16)) - pitch) * k;
-  let py = 0.62 + Math.sin(et * 8.5) * 0.004 * Math.min(1, Math.abs(dyn.u) / 20);
-  if (!onPavement && Math.abs(dyn.u) > 1) py += (Math.random() - 0.5) * 0.03;
-  if (shakeT > 0) {
-    shakeT -= dt;
-    py += (Math.random() - 0.5) * 0.08 * shakeT;
-    yaw += (Math.random() - 0.5) * 0.05 * shakeT;
+  const k = 1 - Math.exp(-dt * 3.6);
+  yaw += ((driving && (mode === 'manual' || mode === 'driving') ? 0 : -mx * 0.5) - yaw) * k;
+  pitch += ((-0.03 - (driving && (mode === 'manual' || mode === 'driving') ? 0 : my * 0.16)) - pitch) * k;
+
+  if (currentPOV === 'chase') {
+    // Elevated third-person chase camera (matches overview perspective)
+    let camY = 3.65 + Math.sin(et * 7.0) * 0.003;
+    let camZ = 8.4;
+    if (shakeT > 0) {
+      shakeT -= dt;
+      camY += (Math.random() - 0.5) * 0.08 * shakeT;
+    }
+    fpsCam.position.set(0, camY, camZ);
+    fpsCam.rotation.set(-0.16 + pitch * 0.35, yaw * 0.45, -yaw * 0.04);
+  } else {
+    // First-person cockpit camera (inside cabin behind wheel)
+    let py = 1.15 + Math.sin(et * 8.5) * 0.004 * Math.min(1, Math.abs(dyn.u) / 20);
+    if (!onPavement && Math.abs(dyn.u) > 1) py += (Math.random() - 0.5) * 0.03;
+    if (shakeT > 0) {
+      shakeT -= dt;
+      py += (Math.random() - 0.5) * 0.08 * shakeT;
+      yaw += (Math.random() - 0.5) * 0.05 * shakeT;
+    }
+    fpsCam.position.set(-0.33, py, 0.15);
+    fpsCam.rotation.set(pitch, yaw + clamp(dyn.delta * 0.12, -0.08, 0.08), -yaw * 0.05 + clamp(dyn.ay * 0.004, -0.05, 0.05));
   }
-  fpsCam.rotation.set(pitch, yaw + clamp(dyn.delta * 0.12, -0.08, 0.08), -yaw * 0.05 + clamp(dyn.ay * 0.004, -0.05, 0.05));
-  fpsCam.position.set(0, py, -2.52);
 }
 
 /* ---------- resize + render loop ---------- */
@@ -3300,9 +5880,10 @@ function renderFrame() {
       if (camT <= 0) { camT = 1 / 8; if (SENS.on) updateCameraFeed(); }
       const proj = updatePlayer(dt);
       egoProj = proj;
+      if (laneGuide && T && egoProj) laneGuide.update(T, egoProj.s, egoProj.lat, nearestLaneIdx(T, egoProj.lat));
       updateAI(dt, proj.s, proj.lat, et);
       updateCrossCars(dt, et);
-      checkCollisions(dt);
+      if (mode !== 'rl_train') checkCollisions(dt);
     }
     updateSignals(et);
     updateFX(dt);
@@ -3326,11 +5907,14 @@ function renderFrame() {
   renderer.clear();
   renderer.setScissorTest(true);
   renderer.render(scene, fpsCam);               // full-screen bumper cam
-  const mapX = innerWidth - MAP_PX - MAP_MARG;   // bottom-right radar
-  renderer.setViewport(mapX, MAP_MARG, MAP_PX, MAP_PX);
-  renderer.setScissor(mapX, MAP_MARG, MAP_PX, MAP_PX);
-  renderer.clearDepth();
-  renderer.render(scene, minimapCam);
+  if (minimap3dOn) {
+    const mapX = innerWidth - MAP_PX - MAP_MARG;   // bottom-right 3D top-down map
+    renderer.setViewport(mapX, MAP_MARG, MAP_PX, MAP_PX);
+    renderer.setScissor(mapX, MAP_MARG, MAP_PX, MAP_PX);
+    renderer.clearDepth();
+    renderer.render(scene, minimapCam);
+  }
+  drawTacticalRadar(et);
 }
 
 /* ---------- boot ---------- */
@@ -3353,7 +5937,7 @@ window.v2vScene = {
   get policy() { return userPolicy; },
   set policy(fn) { userPolicy = typeof fn === 'function' ? fn : null; },
   setBrakeLights: on => scenario.forEach(a => { if (a.dir === 'fwd') a.forceT = on ? 3 : 0; }),
-  setFogDensity, setHeadlights, setMode, resetRun, rebuild
+  setFogDensity, setFog: setFogDensity, setHeadlights, setTimeOfDay, setMode, resetRun, rebuild
 };
 window.__v2vBooted = true;
 

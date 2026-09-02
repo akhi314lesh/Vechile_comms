@@ -3,9 +3,7 @@
  * All modules import from here for shared utilities.
  */
 
-/* ================================================================
-   CONSTANTS
-   ================================================================ */
+/* CONSTANTS */
 export const GRAV = 9.81;
 export const CFG = { laneW: 3.7, shoulder: 1.1 };
 export const PHYS_H = 1 / 120;
@@ -33,10 +31,8 @@ export const OBS_TOTAL = OBS_EGO_FEATURES + OBS_ROAD_FEATURES + MAX_PERCEIVED_OB
 /* BSM staleness */
 export const MAX_BSM_AGE = 2.0; // seconds
 
-/* ================================================================
-   SEEDED PRNG — xoshiro128**
-   Deterministic when seeded. Call createRNG(seed) for each episode.
-   ================================================================ */
+/* SEEDED PRNG — xoshiro128**
+   Deterministic when seeded. Call createRNG(seed) for each episode. */
 export function createRNG(seed) {
   // Simple seed expansion from a single integer
   let s0 = (seed >>> 0) | 1;
@@ -91,9 +87,7 @@ export function createRNG(seed) {
   return rng;
 }
 
-/* ================================================================
-   MATH HELPERS
-   ================================================================ */
+/* MATH HELPERS */
 export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }

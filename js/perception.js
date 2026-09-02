@@ -16,9 +16,7 @@
  */
 import { clamp, wrapAngle, SENSOR_RANGES, MAX_BSM_AGE } from './utils.js';
 
-/* ================================================================
-   ULTRASONIC / PROXIMITY SENSOR — 12 channels covering full car (360°)
-   ================================================================ */
+/*ULTRASONIC / PROXIMITY SENSOR — 12 channels covering full car (360°) */
 const ULTRA_DIRS = [
   0,                  // F  (Front)
   0.26,               // FR1 (Front-Right Narrow)
@@ -55,9 +53,7 @@ function tagOf(obj) {
   return 'unknown';
 }
 
-/* ================================================================
-   LOCAL PERCEPTION — raycasting for ego (full) or AI (simplified)
-   ================================================================ */
+/* LOCAL PERCEPTION — raycasting for ego (full) or AI (simplified)*/
 
 /**
  * Calculate full local perception for the ego vehicle.
@@ -221,9 +217,7 @@ export function calculateAILocalPerception(aiVehicle, allVehicles, obstacles, tr
   return result;
 }
 
-/* ================================================================
-   SENSOR FUSION — merge local + V2V into unified world model
-   ================================================================ */
+/* SENSOR FUSION — merge local + V2V into unified world model */
 
 /**
  * Fuse local perception and V2V objects.
@@ -395,9 +389,7 @@ export function assessHazards(unifiedModel, vehicleState, track) {
   return hazards;
 }
 
-/* ================================================================
-   PERCEPTION MANAGER — orchestrates the full pipeline per vehicle
-   ================================================================ */
+/* PERCEPTION MANAGER — orchestrates the full pipeline per vehicle */
 
 /**
  * Full perception pipeline for a single vehicle.

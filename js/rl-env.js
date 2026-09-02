@@ -381,9 +381,7 @@ export class V2VRLEnvironment {
     return this.metrics;
   }
 
-  /* ================================================================
-     INTERNAL METHODS
-     ================================================================ */
+  /*INTERNAL METHODS */
 
   _getEgoState() {
     if (!this.dyn) return {};
