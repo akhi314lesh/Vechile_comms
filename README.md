@@ -81,10 +81,10 @@ An advanced real-time Vehicle-to-Vehicle (V2V) cooperative perception and autono
 
 | Key / Control | Function | Description |
 | :---: | :---: | :--- |
-| <kbd>W</kbd> / <kbd>S</kbd> | **Throttle / Brake** | Manual longitudinal acceleration and braking |
-| <kbd>A</kbd> / <kbd>D</kbd> | **Steer / Lane Request** | Steering control or cooperative V2V lane-change trigger |
+| <kbd>W</kbd> / <kbd>S</kbd> | **Throttle / Brake** | Manual longitudinal acceleration and braking (active in all modes including V2V Assistant) |
+| <kbd>A</kbd> / <kbd>D</kbd> | **Steering** | Responsive lateral steering with auto-centering and co-pilot lane keeping |
 | <kbd>C</kbd> | **Camera POV** | Cycle through Chase, Cockpit, Bumper, and Top-Down cameras |
-| <kbd>V</kbd> | **Drive Mode** | Toggle between Manual, Perception, V2V, and Debug modes |
+| <kbd>V</kbd> | **Drive Mode** | Toggle between Driving, Perception, V2V Assistant, and Debug modes |
 | <kbd>B</kbd> | **Hazard Beacon** | Toggle emergency hazard lights and broadcast V2V warning |
 | <kbd>H</kbd> | **Headlights** | Toggle high/low-beam dynamic headlights |
 | <kbd>R</kbd> | **Reset Scenario** | Reset ego vehicle position and clear traffic state |

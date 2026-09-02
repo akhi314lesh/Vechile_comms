@@ -4934,8 +4934,6 @@ addEventListener('keydown', e => {
     case 'KeyR': resetRun(); break;
     case 'KeyC': togglePOV(); break;
     case 'KeyV': setMode(mode === 'manual' ? 'v2v' : 'manual'); break;
-    case 'KeyA': if (mode === 'v2v') alcRequest(-1); break;
-    case 'KeyD': if (mode === 'v2v') alcRequest(1); break;
     case 'KeyB':
       scenario.forEach(a => { if (a.dir === 'fwd') a.forceT = 3; });
       toast('HAZARD EVENT — FORWARD VEHICLES BRAKING');
@@ -4963,7 +4961,7 @@ function setMode(m) {
     driving: 'DRIVING MODE · WASD ACTIVE',
     manual: 'DRIVING MODE · WASD ACTIVE',
     perception: 'PERCEPTION SUITE ENGAGED',
-    v2v: 'V2V AUTONOMOUS ASSIST ENGAGED',
+    v2v: 'V2V CO-PILOT ASSIST · WASD ACTIVE',
     debug: 'DEBUG TELEMETRY ACTIVE',
     rl_train: 'RL TRAINING MODE',
     rl_eval: 'RL EVALUATION MODE'
@@ -5091,21 +5089,63 @@ function updatePlayer(dt) {
     ctrl = { steer: manSteer.v, throttle, brake };
     assist = computePolicy(dt, proj, clock.elapsedTime);
   } else if (mode === 'v2v') {
-    if (keys.KeyW || keys.ArrowUp) player.cruise = Math.min(player.cruise + 8 * dt, 44);
-    if (keys.KeyS || keys.ArrowDown) player.cruise = Math.max(player.cruise - 12 * dt, 0);
+    // V2V Assistant Mode: Direct WASD Driver Control + Active V2V Safety Co-Pilot
+    const isW = keys.KeyW || keys.ArrowUp;
+    const isS = keys.KeyS || keys.ArrowDown;
+    const isA = keys.KeyA || keys.ArrowLeft;
+    const isD = keys.KeyD || keys.ArrowRight;
 
-    const input = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    let driverThrottle = isW ? 1.0 : 0.0;
+    let driverBrake = isS ? 1.0 : 0.0;
+    if (dyn.u < 0.4 && driverBrake && !driverThrottle) { driverThrottle = -0.4; driverBrake = 0; }
+
+    const input = (isA ? 1 : 0) - (isD ? 1 : 0);
     const speed = Math.abs(dyn.u);
     const attack = 4.2 / (1 + speed / 32);
     const release = 8.2;
+
     if (input !== 0) {
       manSteer.v += clamp(input - manSteer.v, -attack * dt, attack * dt);
     } else {
       manSteer.v += clamp(-manSteer.v, -release * dt, release * dt);
     }
 
+    // Compute V2V Policy & Safety Proposals
     assist = computePolicy(dt, proj, clock.elapsedTime);
-    ctrl = { steer: assist.steer, throttle: assist.throttle, brake: assist.brake };
+
+    // 1. Lateral Steering:
+    // When steering keys are active, driver has authority.
+    // When hands-off (input === 0), assistant LKA / curve guidance maintains lane centering.
+    // If emergency collision avoidance is required (assist.evasive), assistant evasive steering assists.
+    let steerOut;
+    if (input !== 0) {
+      steerOut = manSteer.v;
+      if (assist.evasive) steerOut = assist.steer;
+    } else {
+      steerOut = assist.steer;
+    }
+
+    // 2. Longitudinal Control:
+    // When driver presses S: driver braking is immediately executed.
+    // When driver presses W: driver throttle is applied (safety AEB override on imminent crash).
+    // When neither W nor S is pressed: assistant maintains safe cruising speed with ACC.
+    let throttleOut, brakeOut;
+    if (isS) {
+      throttleOut = 0.0;
+      brakeOut = Math.max(driverBrake, assist.brake);
+    } else if (isW) {
+      throttleOut = driverThrottle;
+      brakeOut = 0.0;
+      if (assist.aebActive || assist.brake > 0.45) {
+        throttleOut = 0.0;
+        brakeOut = Math.max(0.6, assist.brake);
+      }
+    } else {
+      throttleOut = assist.throttle;
+      brakeOut = assist.brake;
+    }
+
+    ctrl = { steer: steerOut, throttle: throttleOut, brake: brakeOut };
   } else if (userPolicy && policyApiObj) {
     const r = userPolicy(getSensorFrame(), policyApiObj) || {};
     ctrl = { steer: clamp(+r.steer || 0, -1, 1), throttle: clamp(+r.throttle || 0, 0, 1), brake: clamp(+r.brake || 0, 0, 1) };
