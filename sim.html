@@ -1446,6 +1446,7 @@ function buildTrack(scene, def, assets, skyGroup, oldT, createAIFn) {
     group.add(rail);
     railMeshes.push(rail);
   }
+  let postsMesh = null;
   {
     const dummy = new THREE.Object3D(), pm = [];
     for (let s = 0; s < L; s += 4) {
@@ -1462,7 +1463,9 @@ function buildTrack(scene, def, assets, skyGroup, oldT, createAIFn) {
     const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 0.64, 0.1), assets.mat.post, pm.length);
     pm.forEach((m, i) => posts.setMatrixAt(i, m));
     posts.castShadow = true;
+    posts.userData.tag = 'rail';
     group.add(posts);
+    postsMesh = posts;
   }
 
   /* sound barrier + chevrons + caps + gantry + radar ribbon */
@@ -1729,7 +1732,7 @@ function buildTrack(scene, def, assets, skyGroup, oldT, createAIFn) {
   const _fp = new THREE.Vector3(), _ft = new THREE.Vector3(), _fr = new THREE.Vector3();
   return {
     def, curve, L, M, metrics: met, kap, lamps, group, disposeMats, bar, inWin,
-    wallMesh, railMeshes, obstacleMeshes, obstacleData, crossFrames,
+    wallMesh, railMeshes, postsMesh, obstacleMeshes, obstacleData, crossFrames,
     laneLat: (dir, idx) => laneLatOf(def, dir, idx),
     wrapS: wrapLocal,
     kappaAt(s) {
@@ -2084,9 +2087,10 @@ function collectRayTargets() {
   rayTargets.length = 0;
   for (const ai of scenario) { ai.car.userData.tag = 'vehicle'; rayTargets.push(ai.car); }
   for (const cc of crossCars) { cc.car.userData.tag = 'vehicle'; rayTargets.push(cc.car); }
-  for (const m of T.obstacleMeshes) { m.userData.tag = m.userData.tag || 'obstacle'; rayTargets.push(m); }
+  for (const m of (T.obstacleMeshes || [])) { m.userData.tag = m.userData.tag || 'obstacle'; rayTargets.push(m); }
   if (T.wallMesh) { T.wallMesh.userData.tag = 'rail'; rayTargets.push(T.wallMesh); }
-  for (const rl of T.railMeshes) { rl.userData.tag = 'rail'; rayTargets.push(rl); }
+  for (const rl of (T.railMeshes || [])) { rl.userData.tag = 'rail'; rayTargets.push(rl); }
+  if (T.postsMesh) { T.postsMesh.userData.tag = 'rail'; rayTargets.push(T.postsMesh); }
 }
 let sensorVis = null;
 function makeSensorVisualizer() {
@@ -2280,7 +2284,8 @@ function updateSensors(et) {
     const rayMax = isFwd ? 75 : isRear ? 45 : 28;
     const ox = dyn.x + f.x * (ca * 1.8), oz = dyn.z + f.z * (ca * 1.8);
 
-    const h = castRay(ox, 0.55, oz, dx, dz, rayMax);
+    // Cast at 0.70m beam height (cleanly centers through guard rails 0.55m-0.89m, sound walls, and vehicles)
+    const h = castRay(ox, 0.70, oz, dx, dz, rayMax);
     if (h) {
       rayHitDistances.push(h.distance);
       const wx = ox + dx * h.distance, wz = oz + dz * h.distance;
@@ -2315,12 +2320,12 @@ function updateSensors(et) {
     fwdTtc
   };
   /* ultrasonic — 6 fixed bumper channels, capped at 7 m when clear.
-     Cast at 0.55 m so rails/barrels/curbs are all in the beam band. */
+     Cast at 0.70 m so rails/barrels/curbs are all in the beam band. */
   for (let k = 0; k < ULTRA_DIRS.length; k++) {
     const a = ULTRA_DIRS[k];
     const ca = Math.cos(a), sa = Math.sin(a);
     const dx = f.x * ca - f.z * sa, dz = f.x * sa + f.z * ca;
-    const h = castRay(dyn.x, 0.55, dyn.z, dx, dz, SENS.ultra.far);
+    const h = castRay(dyn.x, 0.70, dyn.z, dx, dz, SENS.ultra.far);
     if (h) {
       SENS.ultra.dist[k] = Math.max(0.15, h.distance);
       SENS.ultra.types[k] = tagOf(h.object);
