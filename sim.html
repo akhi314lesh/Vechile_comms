@@ -2620,18 +2620,23 @@ function evaluateThreats(ego, perceived, track, et) {
     const isFresh = (p.src === 'local') || (v2vAge < RISK_THRESHOLDS.V2V_STALE_AGE);
     const isStatic = !!p.isStatic;
 
-    // Static barriers (rails, obstacles): synthesize a virtual TTC based on forward distance + ego speed
-    // so AEB and IDM treat them as blocking objects when directly in the path
+    // Static barriers (rails, obstacles): synthesize a virtual TTC for IDM speed-reduction ONLY.
+    // CRITICAL: static rail threats must NEVER trigger emergency lateral evasion or AEB —
+    // the rigid-body boundary physics already prevents the car from passing through rails.
+    // Adding a steering impulse toward a rail causes CRASHES, not avoidance.
     if (isStatic) {
       const fwd = dyn2D.fwdDist;
       const lat = Math.abs(dyn2D.latOffset);
-      const isDirectlyAhead = fwd > 0.5 && fwd < 40.0 && lat < 2.2;
-      const isLateralHazard = fwd > -2.0 && fwd < 8.0 && lat < 3.5;
-      if (!isDirectlyAhead && !isLateralHazard) continue; // rail off to the side, ignore
+      // Only react when the rail is directly in front AND close to the car's centerline (<1.5m)
+      // Side rails (lat >= 1.5m) are handled purely by the physics boundary — no control action.
+      const isDirectlyAhead = fwd > 0.5 && fwd < 35.0 && lat < 1.5;
+      const isLateralHazard = fwd > -1.5 && fwd < 6.0 && lat < 2.5;
+      if (!isDirectlyAhead && !isLateralHazard) continue; // side rail — ignore in control stack
       const synthTTC = egoSpeed > 0.3 ? fwd / Math.max(egoSpeed, 0.3) : Infinity;
+      // Keep railRisk low enough so a side rail never becomes highestRiskThreat over a vehicle
       const railRisk = isDirectlyAhead
-        ? clamp((1.0 - fwd / 40.0) * (egoSpeed > 1.0 ? 1.0 : 0.4), 0, 0.92)
-        : 0.15; // lateral rail — low risk, just proximity awareness
+        ? clamp((1.0 - fwd / 35.0) * (egoSpeed > 1.0 ? 0.70 : 0.3), 0, 0.70)
+        : 0.08; // lateral rail — very low risk, proximity info only
 
       threats.push({
         id: -1, source: 'LOCAL', wx: p.wx, wz: p.wz,
@@ -2641,9 +2646,12 @@ function evaluateThreats(ego, perceived, track, et) {
         relativeSpeed: -egoSpeed, closingSpeed: egoSpeed,
         lane: pLane, heading: ego.psi, ttc: synthTTC,
         isClosing: egoSpeed > 0.1, collisionRisk: railRisk,
-        trajectoryRisk: isDirectlyAhead ? 1.0 : 0.2,
-        v2vAge: 0, isAhead: isDirectlyAhead, isSameLane: isDirectlyAhead && lat < 1.85,
-        isStatic: true
+        trajectoryRisk: isDirectlyAhead ? 0.85 : 0.1,
+        v2vAge: 0, isAhead: isDirectlyAhead, isSameLane: isDirectlyAhead && lat < 1.5,
+        isStatic: true,
+        // Safety flags: rails must only affect longitudinal speed, NEVER lateral evasion
+        canEvasionSteer: false,
+        canAEB: false
       });
       continue;
     }
@@ -3425,6 +3433,9 @@ function generateAEBProposal(egoSpeed, highestRiskThreat, riskLevel) {
   if (!adas.aeb || !highestRiskThreat || !highestRiskThreat.isAhead || !highestRiskThreat.isSameLane) {
     return proposal;
   }
+  // Static rail/obstacle: the rigid physics boundary already prevents passing through.
+  // AEB on a guard rail causes unnecessary panic-braking; skip — IDM handles speed reduction.
+  if (highestRiskThreat.isStatic) return proposal;
 
   const ttc = highestRiskThreat.ttc;
   const dist = highestRiskThreat.distance;
@@ -3530,6 +3541,11 @@ function generateEmergencyAvoidanceProposal(egoLat, egoS, egoSpeed, highestRiskT
 
   if (riskLevel !== 'CRITICAL' && riskLevel !== 'HIGH') return proposal;
   if (!highestRiskThreat || !highestRiskThreat.isAhead || !highestRiskThreat.isSameLane) return proposal;
+  // CRITICAL SAFETY GUARD: Static guardrails/barriers must NEVER trigger lateral evasion steering.
+  // The rigid boundary physics prevents the car from passing through rails.
+  // Steering INTO a rail in response to that rail being detected is exactly wrong.
+  // IDM + longitudinal slow-down handles rail proximity; lateral evasion only applies to vehicles.
+  if (highestRiskThreat.isStatic || highestRiskThreat.canEvasionSteer === false) return proposal;
 
   // If TTC is critical (< 1.6s) or critically low gap, evaluate lateral escape vs straight-line braking
   const curLane = nearestLaneIdx(track, egoLat);
@@ -5188,9 +5204,12 @@ function updatePlayer(dt) {
       }
     }
     
-    // Safety Proximity Shield: gentle brake assist if about to hit wall/car
+    // Safety Proximity Shield: gentle brake assist if a VEHICLE is close ahead.
+    // Exclude static rail detections — the rigid boundary physics handles those;
+    // braking hard at a wall while driving along it causes unnecessary stops.
     const prox = SENS.proximity;
-    if (aids.on && prox && prox.fwd < 5.0 && speed > 2.0) {
+    const proxThreat = SENS.perceived.find(p => !p.isStatic && p.tag === 'vehicle');
+    if (aids.on && prox && prox.fwd < 5.0 && speed > 2.0 && proxThreat) {
       brake = Math.max(brake, 0.95);
       throttle = 0.0;
     }
